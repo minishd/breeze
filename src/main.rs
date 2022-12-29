@@ -1,4 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+extern crate axum;
 
 use axum::{
     routing::{get, post},
@@ -6,6 +8,7 @@ use axum::{
 };
 use bytes::Bytes;
 use memory_cache::MemoryCache;
+use tokio::sync::Mutex;
 
 mod state;
 mod new;

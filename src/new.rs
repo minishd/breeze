@@ -44,6 +44,7 @@ fn gen_path(original_name: &String) -> PathBuf {
     }
 }
 
+#[axum::debug_handler]
 pub async fn new(
     State(state): State<Arc<crate::state::AppState>>,
     headers: HeaderMap,
@@ -119,7 +120,7 @@ pub async fn new(
             tx.send(chunk.clone()).await.unwrap();
 
             if use_cache {
-                println!("[upl] receiving data into cache");
+                println!("[upl] receiving data into buffer");
                 if data.len() + chunk.len() > data.capacity() {
                     println!("[upl] too much data! the client had an invalid content-length!");
 
@@ -132,11 +133,11 @@ pub async fn new(
             }
         }
 
-        let mut cache = state.cache.lock().unwrap();
+        let mut cache = state.cache.lock().await;
 
         if use_cache {
             println!("[upl] caching upload!!");
-            cache.insert(name, data.freeze(), Some(Duration::from_secs(30)));
+            cache.insert(name, data.freeze(), Some(Duration::from_secs(120)));
         }
     });
 

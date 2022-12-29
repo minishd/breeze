@@ -7,7 +7,7 @@ use std::{
 use axum::{
     body::StreamBody,
     extract::{Path, State},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Response}, debug_handler,
 };
 use bytes::{buf::Reader, Bytes};
 use hyper::StatusCode;
@@ -28,12 +28,11 @@ impl IntoResponse for ViewResponse {
     }
 } */
 
+#[axum::debug_handler]
 pub async fn view(
     State(state): State<Arc<crate::state::AppState>>,
     Path(original_path): Path<PathBuf>,
 ) -> Response {
-    println!("{:?}", original_path);
-
     // (hopefully) prevent path traversal, just check for any non-file components
     if original_path
         .components()
@@ -50,11 +49,11 @@ pub async fn view(
         .unwrap_or_default()
         .to_string();
 
-    let cache = state.cache.lock().unwrap();
+    let cache = state.cache.lock().await;
 
     let cache_item = cache.get(&name);
 
-    if true /* cache_item.is_none() */ {
+    if cache_item.is_none() {
         let mut path = PathBuf::new();
         path.push("uploads/");
         path.push(name);

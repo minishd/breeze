@@ -75,7 +75,9 @@ pub async fn view(
 
     println!("from cache! :D");
 
-    return "asdf".into_response();
+    let data = cache_item.unwrap().clone();
+
+    return data.into_response();
 }
 
 /* pub async fn view(

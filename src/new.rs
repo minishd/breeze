@@ -139,6 +139,8 @@ pub async fn new(
             println!("[upl] caching upload!!");
             cache.insert(name, data.freeze(), Some(Duration::from_secs(120)));
         }
+
+        drop(cache);
     });
 
     Ok(url)

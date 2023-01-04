@@ -7,11 +7,10 @@ use std::{
 use axum::{
     body::StreamBody,
     extract::{Path, State},
-    response::{IntoResponse, Response}, debug_handler, http::HeaderValue,
+    response::{IntoResponse, Response}, debug_handler,
 };
 use bytes::{buf::Reader, Bytes};
 use hyper::StatusCode;
-use mime_guess::{mime, Mime};
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
@@ -77,18 +76,7 @@ pub async fn view(
 
     let data = cache_item.unwrap().clone();
 
-    drop(cache);
-
-    let contentType = mime_guess::from_path(name).first().unwrap_or(mime::APPLICATION_OCTET_STREAM).to_string();
-
-    let mut res = data.into_response();
-
-    let mut headers = res.headers_mut();
-
-    headers.clear();
-    headers.insert("content-type", HeaderValue::from(contentType));
-
-    return res;
+    return data.into_response();
 }
 
 /* pub async fn view(

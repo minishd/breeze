@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'axum-demo'",
+            "name": "Debug executable 'breeze'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=axum-demo",
-                    "--package=axum-demo"
+                    "--bin=breeze",
+                    "--package=breeze"
                 ],
                 "filter": {
-                    "name": "axum-demo",
+                    "name": "breeze",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'axum-demo'",
+            "name": "Debug unit tests in executable 'breeze'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=axum-demo",
-                    "--package=axum-demo"
+                    "--bin=breeze",
+                    "--package=breeze"
                 ],
                 "filter": {
-                    "name": "axum-demo",
+                    "name": "breeze",
                     "kind": "bin"
                 }
             },

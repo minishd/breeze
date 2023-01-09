@@ -16,22 +16,6 @@ use mime_guess::mime;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
-use crate::cache;
-
-/* pub enum ViewResponse {
-    FromDisk(StreamBody<ReaderStream<File>>),
-    FromCache(Bytes)
-}
-
-impl IntoResponse for ViewResponse {
-    fn into_response(self) -> Response {
-        match self {
-            ViewResponse::FromDisk(stream) => stream.into_response(),
-            ViewResponse::FromCache(data) => data.into_response()
-        }
-    }
-} */
-
 #[axum::debug_handler]
 pub async fn view(
     State(state): State<Arc<crate::state::AppState>>,

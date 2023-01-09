@@ -7,12 +7,17 @@ use std::{
 use axum::{
     body::StreamBody,
     extract::{Path, State},
-    response::{IntoResponse, Response}, debug_handler,
+    http::HeaderValue,
+    response::{IntoResponse, Response},
 };
-use bytes::{buf::Reader, Bytes};
+
+use bytes::{Bytes, BytesMut};
 use hyper::StatusCode;
-use tokio::fs::File;
+use mime_guess::mime;
+use tokio::{fs::File, io::AsyncReadExt};
 use tokio_util::io::ReaderStream;
+
+use crate::cache;
 
 /* pub enum ViewResponse {
     FromDisk(StreamBody<ReaderStream<File>>),
@@ -39,7 +44,69 @@ pub async fn view(
         .into_iter()
         .any(|x| !matches!(x, Component::Normal(_)))
     {
-        println!("lol NOPE");
+        error!(target: "view", "a request attempted path traversal");
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let name = original_path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let mut cache = state.cache.lock().await;
+
+    let cache_item = cache.get(&name.clone());
+
+    if cache_item.is_none() {
+        let mut path = PathBuf::new();
+        path.push("uploads/");
+        path.push(name.clone());
+
+        if !path.exists() || !path.is_file() {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+
+        let mut file = File::open(path).await.unwrap();
+        let file_len = file.metadata().await.unwrap().len() as usize;
+
+        if file_len < cache::MAX_LENGTH {
+            info!(target: "view", "recaching upload from disk");
+
+            let mut data = BytesMut::zeroed(file_len);
+            file.read_buf(&mut data.as_mut()).await.unwrap();
+            let data = data.freeze();
+
+            cache.insert(name.clone(), data.clone(), Some(cache::DURATION));
+
+            return cache::get_response(&mut cache, original_path);
+        } else {
+            let reader = ReaderStream::new(file);
+            let stream = StreamBody::new(reader);
+
+            info!(target: "view", "reading upload from disk");
+
+            return stream.into_response();
+        }
+    }
+
+    info!(target: "view", "reading upload from cache");
+
+    return cache::get_response(&mut cache, original_path);
+}
+
+/* #[axum::debug_handler]
+pub async fn view(
+    State(state): State<Arc<crate::state::AppState>>,
+    Path(original_path): Path<PathBuf>,
+) -> Response {
+    // (hopefully) prevent path traversal, just check for any non-file components
+    if original_path
+        .components()
+        .into_iter()
+        .any(|x| !matches!(x, Component::Normal(_)))
+    {
+        error!(target: "view", "a request attempted path traversal");
         return StatusCode::NOT_FOUND.into_response();
     }
 
@@ -64,71 +131,35 @@ pub async fn view(
 
         let file = File::open(path).await.unwrap();
 
+        if file.metadata().await.unwrap().len() < (cache::MAX_LENGTH as u64) {
+            info!("file can be cached");
+        }
+
         let reader = ReaderStream::new(file);
         let stream = StreamBody::new(reader);
 
-        println!("from disk");
+        info!(target: "view", "reading upload from disk");
 
         return stream.into_response();
     }
 
-    println!("from cache! :D");
+    info!(target: "view", "reading upload from cache");
 
     let data = cache_item.unwrap().clone();
 
-    return data.into_response();
-}
-
-/* pub async fn view(
-    State(mem_cache): State<Arc<crate::cache::MemCache>>,
-    Path(original_path): Path<PathBuf>,
-) -> Response {
-    for component in original_path.components() {
-        println!("{:?}", component);
-    }
-
-    // (hopefully) prevent path traversal, just check for any non-file components
-    if original_path
-        .components()
-        .into_iter()
-        .any(|x| !matches!(x, Component::Normal(_)))
-    {
-        return StatusCode::NOT_FOUND.into_response()
-    }
-
-    // this causes an obscure bug where filenames like hiworld%2fnamehere.png will still load namehere.png
-    // i could limit the path components to 1 and sort of fix this
-    let name = original_path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
+    let content_type = mime_guess::from_path(original_path)
+        .first()
+        .unwrap_or(mime::APPLICATION_OCTET_STREAM)
         .to_string();
 
-    let cache = mem_cache.cache.lock().unwrap();
+    let mut res = data.into_response();
+    let headers = res.headers_mut();
 
-    let cache_item = cache.get(&name);
+    headers.clear();
+    headers.insert(
+        "content-type",
+        HeaderValue::from_str(content_type.as_str()).unwrap(),
+    );
 
-    if cache_item.is_some() {
-        println!("they requested something in the cache!");
-
-        let data = cache_item.unwrap().clone();
-
-        return data.into_response()
-    }
-
-    let mut path = PathBuf::new();
-    path.push("uploads/");
-    path.push(name);
-
-    if !path.exists() || !path.is_file() {
-        return StatusCode::NOT_FOUND.into_response()
-    }
-
-    let file = File::open(path).await.unwrap();
-
-    let reader = ReaderStream::new(file);
-    let stream = StreamBody::new(reader);
-
-    stream.into_response()
-}
- */
+    return res;
+} */

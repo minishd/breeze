@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, path::PathBuf, time::Duration, process::exit};
 
 extern crate axum;
 
@@ -7,54 +7,54 @@ extern crate log;
 
 extern crate simplelog;
 
-use simplelog::*;
+use engine::Engine;
 
 use axum::{
     routing::{get, post},
     Router,
 };
-use bytes::Bytes;
-use memory_cache::MemoryCache;
-use tokio::sync::Mutex;
+use simplelog::*;
 
-mod cache;
+mod engine;
+mod index;
 mod new;
-mod state;
 mod view;
 
 #[tokio::main]
 async fn main() {
-    // initialise logger
+    // Initialise logger
     TermLogger::init(
-        LevelFilter::Debug,
+        LevelFilter::Warn,
         Config::default(),
         TerminalMode::Mixed,
         ColorChoice::Auto,
     )
     .unwrap();
 
-    // create cache
-    let cache: MemoryCache<String, Bytes> = MemoryCache::with_full_scan(cache::FULL_SCAN_FREQ);
+    // Create engine
+    let engine = Engine::new( // TODO: Read config from env vars
+        "http://127.0.0.1:8000".to_string(),
+        PathBuf::from("./uploads/"),
+        80_000_000, // Main instance is going to use this
+        Duration::from_secs(8), // CHANGE THIS!!!!!!!
+        Duration::from_secs(1), // THIS TOO!!!!!!!!!!!!!!!
+    );
 
-    // create appstate
-    let state = state::AppState {
-        cache: Mutex::new(cache),
-    };
-
-    // build main router
+    // Build main router
     let app = Router::new()
         .route("/new", post(new::new))
         .route("/p/:name", get(view::view))
-        .route("/", get(index))
-        .with_state(Arc::new(state));
+        .route("/", get(index::index))
+        .route("/exit", get(exit_abc))
+        .with_state(Arc::new(engine));
 
-    // start web server
+    // Start web server
     axum::Server::bind(&"127.0.0.1:8000".parse().unwrap()) // don't forget to change this! it's local for now
         .serve(app.into_make_service())
         .await
         .unwrap();
 }
 
-async fn index() -> &'static str {
-    "hi world!"
+async fn exit_abc() {
+    exit(123);
 }

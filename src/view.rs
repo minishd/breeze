@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsStr,
     path::{Component, PathBuf},
     sync::Arc,
 };
@@ -11,16 +10,56 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use bytes::Bytes;
 use hyper::StatusCode;
 use mime_guess::mime;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
+pub enum ViewResponse {
+    FromDisk(File),
+    FromCache(PathBuf, Bytes),
+}
+
+impl IntoResponse for ViewResponse {
+    fn into_response(self) -> Response {
+        match self {
+            ViewResponse::FromDisk(file) => {
+                let reader = ReaderStream::new(file);
+                let stream = StreamBody::new(reader);
+        
+                stream.into_response()
+            }
+            ViewResponse::FromCache(original_path, data) => {
+                // guess the content-type using the original path
+                // (axum handles this w/ streamed file responses but caches are octet-stream by default)
+                let content_type = mime_guess::from_path(original_path)
+                    .first()
+                    .unwrap_or(mime::APPLICATION_OCTET_STREAM)
+                    .to_string();
+
+                // extract mutable headers from the response
+                let mut res = data.into_response();
+                let headers = res.headers_mut();
+
+                // clear the headers and add our content-type
+                headers.clear();
+                headers.insert(
+                    "content-type",
+                    HeaderValue::from_str(content_type.as_str()).unwrap(),
+                );
+
+                res
+            }
+        }
+    }
+}
+
 #[axum::debug_handler]
 pub async fn view(
-    State(state): State<Arc<crate::state::AppState>>,
+    State(engine): State<Arc<crate::engine::Engine>>,
     Path(original_path): Path<PathBuf>,
-) -> Response {
+) -> Result<ViewResponse, StatusCode> {
     // (hopefully) prevent path traversal, just check for any non-file components
     if original_path
         .components()
@@ -28,55 +67,8 @@ pub async fn view(
         .any(|x| !matches!(x, Component::Normal(_)))
     {
         error!(target: "view", "a request attempted path traversal");
-        return StatusCode::NOT_FOUND.into_response();
+        return Err(StatusCode::NOT_FOUND);
     }
-
-    let name = original_path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_string();
-
-    let cache = state.cache.lock().await;
-
-    let cache_item = cache.get(&name);
-
-    if cache_item.is_none() {
-        let mut path = PathBuf::new();
-        path.push("uploads/");
-        path.push(name);
-
-        if !path.exists() || !path.is_file() {
-            return StatusCode::NOT_FOUND.into_response();
-        }
-
-        let file = File::open(path).await.unwrap();
-
-        let reader = ReaderStream::new(file);
-        let stream = StreamBody::new(reader);
-
-        info!(target: "view", "reading upload from disk");
-
-        return stream.into_response();
-    }
-
-    info!(target: "view", "reading upload from cache");
-
-    let data = cache_item.unwrap().clone();
-
-    let content_type = mime_guess::from_path(original_path)
-        .first()
-        .unwrap_or(mime::APPLICATION_OCTET_STREAM)
-        .to_string();
-
-    let mut res = data.into_response();
-    let headers = res.headers_mut();
-
-    headers.clear();
-    headers.insert(
-        "content-type",
-        HeaderValue::from_str(content_type.as_str()).unwrap(),
-    );
-
-    return res;
+    
+    engine.get_upload(&original_path).await
 }

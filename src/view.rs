@@ -6,48 +6,36 @@ use std::{
 use axum::{
     body::StreamBody,
     extract::{Path, State},
-    http::HeaderValue,
     response::{IntoResponse, Response},
 };
 
 use bytes::Bytes;
 use hyper::StatusCode;
-use mime_guess::mime;
 use tokio::fs::File;
 use tokio_util::io::ReaderStream;
 
 pub enum ViewResponse {
     FromDisk(File),
-    FromCache(PathBuf, Bytes),
+    FromCache(Bytes),
 }
 
 impl IntoResponse for ViewResponse {
     fn into_response(self) -> Response {
         match self {
             ViewResponse::FromDisk(file) => {
+                // create a streamed body response (we want to stream larger files)
                 let reader = ReaderStream::new(file);
                 let stream = StreamBody::new(reader);
-        
+
                 stream.into_response()
             }
-            ViewResponse::FromCache(original_path, data) => {
-                // guess the content-type using the original path
-                // (axum handles this w/ streamed file responses but caches are octet-stream by default)
-                let content_type = mime_guess::from_path(original_path)
-                    .first()
-                    .unwrap_or(mime::APPLICATION_OCTET_STREAM)
-                    .to_string();
-
+            ViewResponse::FromCache(data) => {
                 // extract mutable headers from the response
                 let mut res = data.into_response();
                 let headers = res.headers_mut();
 
-                // clear the headers and add our content-type
+                // clear the headers, let the browser imply it
                 headers.clear();
-                headers.insert(
-                    "content-type",
-                    HeaderValue::from_str(content_type.as_str()).unwrap(),
-                );
 
                 res
             }
@@ -66,9 +54,9 @@ pub async fn view(
         .into_iter()
         .any(|x| !matches!(x, Component::Normal(_)))
     {
-        error!(target: "view", "a request attempted path traversal");
+        warn!(target: "view", "a request attempted path traversal");
         return Err(StatusCode::NOT_FOUND);
     }
-    
+
     engine.get_upload(&original_path).await
 }

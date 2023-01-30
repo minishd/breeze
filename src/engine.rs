@@ -5,17 +5,17 @@ use std::{
     time::Duration,
 };
 
+use archived::Archive;
 use axum::extract::BodyStream;
 use bytes::{BufMut, Bytes, BytesMut};
 use hyper::StatusCode;
-use memory_cache::MemoryCache;
 use rand::Rng;
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncWriteExt},
     sync::{
         mpsc::{self, Receiver, Sender},
-        Mutex,
+        RwLock,
     },
 };
 use tokio_stream::StreamExt;
@@ -25,15 +25,14 @@ use crate::view::ViewResponse;
 
 pub struct Engine {
     // state
-    cache: Mutex<MemoryCache<String, Bytes>>, // in-memory cache. note/ i plan to lock the cache specifically only when needed rather than locking the whole struct
-    pub upl_count: AtomicUsize,               // cached count of uploaded files
+    cache: RwLock<Archive>, // in-memory cache. note/ i plan to lock the cache specifically only when needed rather than locking the whole struct
+    pub upl_count: AtomicUsize, // cached count of uploaded files
 
     // config
     pub base_url: String, // base url for formatting upload urls
     save_path: PathBuf,   // where uploads are saved to disk
 
     cache_max_length: usize, // if an upload is bigger than this size, it won't be cached
-    cache_keep_alive: Duration, // amount of time a file should last in cache
 }
 
 impl Engine {
@@ -42,18 +41,22 @@ impl Engine {
         base_url: String,
         save_path: PathBuf,
         cache_max_length: usize,
-        cache_keep_alive: Duration,
+        cache_lifetime: Duration,
         cache_full_scan_freq: Duration, // how often the cache will be scanned for expired items
+        cache_mem_capacity: usize,
     ) -> Self {
         Self {
-            cache: Mutex::new(MemoryCache::with_full_scan(cache_full_scan_freq)),
+            cache: RwLock::new(Archive::with_full_scan(
+                cache_full_scan_freq,
+                cache_lifetime,
+                cache_mem_capacity,
+            )),
             upl_count: AtomicUsize::new(WalkDir::new(&save_path).into_iter().count()), // count the amount of files in the save path and initialise our cached count with it
 
             base_url,
             save_path,
 
             cache_max_length,
-            cache_keep_alive,
         }
     }
 
@@ -63,9 +66,9 @@ impl Engine {
 
     // checks in cache or disk for an upload using a pathbuf
     pub async fn upload_exists(&self, path: &PathBuf) -> bool {
-        let cache = self.cache.lock().await;
+        let cache = self.cache.read().await;
 
-        // Check if upload is in cache
+        // check if upload is in cache
         let name = path
             .file_name()
             .and_then(OsStr::to_str)
@@ -76,7 +79,7 @@ impl Engine {
             return true;
         }
 
-        // Check if upload is on disk
+        // check if upload is on disk
         if path.exists() {
             return true;
         }
@@ -101,6 +104,7 @@ impl Engine {
             .unwrap_or_default()
             .to_string();
 
+        // path on disk
         let mut path = self.save_path.clone();
         path.push(&id);
         path.set_extension(original_extension);
@@ -124,11 +128,6 @@ impl Engine {
         // if the upload size is smaller than the specified maximum, we use the cache!
         let mut use_cache = self.will_use_cache(content_length);
 
-        // create file to save upload to
-        let mut file = File::create(path)
-            .await
-            .expect("could not open file! make sure your upload path exists");
-
         // if we're using cache, make some space to store the upload in
         let mut data = if use_cache {
             BytesMut::with_capacity(content_length)
@@ -140,6 +139,11 @@ impl Engine {
         let (tx, mut rx): (Sender<Bytes>, Receiver<Bytes>) = mpsc::channel(1);
 
         tokio::spawn(async move {
+            // create file to save upload to
+            let mut file = File::create(path)
+                .await
+                .expect("could not open file! make sure your upload path exists");
+
             // receive chunks and save them to file
             while let Some(chunk) = rx.recv().await {
                 debug!(target: "process_upload", "writing chunk to disk (length: {})", chunk.len());
@@ -175,84 +179,104 @@ impl Engine {
 
         // insert upload into cache if necessary
         if use_cache {
-            let mut cache = self.cache.lock().await;
+            let mut cache = self.cache.write().await;
 
             info!(target: "process_upload", "caching upload!");
-            cache.insert(name, data.freeze(), Some(self.cache_keep_alive));
+            cache.insert(name, data.freeze());
         }
 
         // if all goes well, increment the cached upload counter
         self.upl_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    // read an upload from cache, if it exists
+    // previously, this would lock the cache as writable to renew the upload's cache lifespan
+    // locking the cache as readable allows multiple concurrent readers, which allows me to handle multiple views concurrently
     async fn read_cached_upload(&self, name: &String) -> Option<Bytes> {
-        let mut cache = self.cache.lock().await;
+        let cache = self.cache.read().await;
 
         if !cache.contains_key(&name) {
             return None;
         }
 
+        // fetch upload data from cache
         let data = cache
             .get(&name)
             .expect("failed to read get upload data from cache")
             .to_owned();
 
-        cache.insert(name.to_string(), data.clone(), Some(self.cache_keep_alive));
-
         Some(data)
     }
 
     pub async fn get_upload(&self, original_path: &PathBuf) -> Result<ViewResponse, StatusCode> {
+        // extract upload file name
         let name = original_path
             .file_name()
             .and_then(OsStr::to_str)
             .unwrap_or_default()
             .to_string();
 
+        // path on disk
         let mut path = self.save_path.clone();
         path.push(&name);
 
-        // check if the upload exists
+        // check if the upload exists, if not then 404
         if !self.upload_exists(&path).await {
             return Err(StatusCode::NOT_FOUND);
         }
 
+        // attempt to read upload from cache
         let cached_data = self.read_cached_upload(&name).await;
 
-        match cached_data {
-            Some(data) => {
-                info!(target: "get_upload", "got upload from cache!!");
+        if let Some(data) = cached_data {
+            info!(target: "get_upload", "got upload from cache!!");
 
-                return Ok(ViewResponse::FromCache(path, data));
-            }
-            None => {
-                let mut file = File::open(&path).await.unwrap();
+            return Ok(ViewResponse::FromCache(data));
+        } else {
+            let mut file = File::open(&path).await.unwrap();
 
-                let length = file
-                    .metadata()
-                    .await
-                    .expect("failed to read upload file metadata")
-                    .len() as usize;
+            // read upload length from disk
+            let length = file
+                .metadata()
+                .await
+                .expect("failed to read upload file metadata")
+                .len() as usize;
 
-                debug!(target: "get_upload", "read upload from disk, size = {}", length);
+            debug!(target: "get_upload", "read upload from disk, size = {}", length);
 
-                if self.will_use_cache(length) {
-                    let mut data = BytesMut::with_capacity(length);
-                    while file.read_buf(&mut data).await.unwrap() != 0 {}
-                    let data = data.freeze();
+            // if the upload is okay to cache, recache it and send a fromcache response
+            if self.will_use_cache(length) {
+                // read file from disk
+                let mut data = BytesMut::with_capacity(length);
 
-                    let mut cache = self.cache.lock().await;
-                    cache.insert(name, data.clone(), Some(self.cache_keep_alive));
-
-                    info!(target: "get_upload", "recached upload from disk!");
-
-                    return Ok(ViewResponse::FromCache(path, data));
+                // read file from disk and if it fails at any point, return 500
+                loop {
+                    match file.read_buf(&mut data).await {
+                        Ok(n) => {
+                            if n == 0 {
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        },
+                    }
                 }
 
-                info!(target: "get_upload", "got upload from disk!");
+                let data = data.freeze();
 
-                return Ok(ViewResponse::FromDisk(file));
+                // re-insert it into cache
+                let mut cache = self.cache.write().await;
+                cache.insert(name, data.clone());
+
+                info!(target: "get_upload", "recached upload from disk!");
+
+                return Ok(ViewResponse::FromCache(data));
             }
+
+            info!(target: "get_upload", "got upload from disk!");
+
+            return Ok(ViewResponse::FromDisk(file));
         }
     }
 }

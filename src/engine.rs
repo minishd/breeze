@@ -8,7 +8,6 @@ use std::{
 use archived::Archive;
 use axum::extract::BodyStream;
 use bytes::{BufMut, Bytes, BytesMut};
-use hyper::StatusCode;
 use rand::Rng;
 use tokio::{
     fs::File,
@@ -21,7 +20,7 @@ use tokio::{
 use tokio_stream::StreamExt;
 use walkdir::WalkDir;
 
-use crate::view::ViewResponse;
+use crate::view::{ViewSuccess, ViewError};
 
 pub struct Engine {
     // state
@@ -51,7 +50,7 @@ impl Engine {
                 cache_lifetime,
                 cache_mem_capacity,
             )),
-            upl_count: AtomicUsize::new(WalkDir::new(&save_path).into_iter().count()), // count the amount of files in the save path and initialise our cached count with it
+            upl_count: AtomicUsize::new(WalkDir::new(&save_path).min_depth(1).into_iter().count()), // count the amount of files in the save path and initialise our cached count with it
 
             base_url,
             save_path,
@@ -208,7 +207,7 @@ impl Engine {
         Some(data)
     }
 
-    pub async fn get_upload(&self, original_path: &PathBuf) -> Result<ViewResponse, StatusCode> {
+    pub async fn get_upload(&self, original_path: &PathBuf) -> Result<ViewSuccess, ViewError> {
         // extract upload file name
         let name = original_path
             .file_name()
@@ -222,7 +221,7 @@ impl Engine {
 
         // check if the upload exists, if not then 404
         if !self.upload_exists(&path).await {
-            return Err(StatusCode::NOT_FOUND);
+            return Err(ViewError::NotFound);
         }
 
         // attempt to read upload from cache
@@ -231,7 +230,7 @@ impl Engine {
         if let Some(data) = cached_data {
             info!(target: "get_upload", "got upload from cache!!");
 
-            return Ok(ViewResponse::FromCache(data));
+            return Ok(ViewSuccess::FromCache(data));
         } else {
             let mut file = File::open(&path).await.unwrap();
 
@@ -258,8 +257,8 @@ impl Engine {
                             }
                         }
                         Err(_) => {
-                            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-                        },
+                            return Err(ViewError::InternalServerError);
+                        }
                     }
                 }
 
@@ -271,12 +270,12 @@ impl Engine {
 
                 info!(target: "get_upload", "recached upload from disk!");
 
-                return Ok(ViewResponse::FromCache(data));
+                return Ok(ViewSuccess::FromCache(data));
             }
 
             info!(target: "get_upload", "got upload from disk!");
 
-            return Ok(ViewResponse::FromDisk(file));
+            return Ok(ViewSuccess::FromDisk(file));
         }
     }
 }

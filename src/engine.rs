@@ -20,16 +20,17 @@ use tokio::{
 use tokio_stream::StreamExt;
 use walkdir::WalkDir;
 
-use crate::view::{ViewSuccess, ViewError};
+use crate::view::{ViewError, ViewSuccess};
 
 pub struct Engine {
     // state
-    cache: RwLock<Archive>, // in-memory cache. note/ i plan to lock the cache specifically only when needed rather than locking the whole struct
+    cache: RwLock<Archive>,     // in-memory cache
     pub upl_count: AtomicUsize, // cached count of uploaded files
 
     // config
-    pub base_url: String, // base url for formatting upload urls
-    save_path: PathBuf,   // where uploads are saved to disk
+    pub base_url: String,   // base url for formatting upload urls
+    save_path: PathBuf,     // where uploads are saved to disk
+    pub upload_key: String, // authorisation key for uploading new files
 
     cache_max_length: usize, // if an upload is bigger than this size, it won't be cached
 }
@@ -39,6 +40,7 @@ impl Engine {
     pub fn new(
         base_url: String,
         save_path: PathBuf,
+        upload_key: String,
         cache_max_length: usize,
         cache_lifetime: Duration,
         cache_full_scan_freq: Duration, // how often the cache will be scanned for expired items
@@ -54,6 +56,7 @@ impl Engine {
 
             base_url,
             save_path,
+            upload_key,
 
             cache_max_length,
         }
@@ -141,11 +144,11 @@ impl Engine {
             // create file to save upload to
             let mut file = File::create(path)
                 .await
-                .expect("could not open file! make sure your upload path exists");
+                .expect("could not open file! make sure your upload path is valid");
 
             // receive chunks and save them to file
             while let Some(chunk) = rx.recv().await {
-                debug!(target: "process_upload", "writing chunk to disk (length: {})", chunk.len());
+                debug!("writing chunk to disk (length: {})", chunk.len());
                 file.write_all(&chunk)
                     .await
                     .expect("error while writing file to disk");
@@ -157,15 +160,15 @@ impl Engine {
             let chunk = chunk.unwrap();
 
             // send chunk to io task
-            debug!(target: "process_upload", "sending data to io task");
+            debug!("sending data to io task");
             tx.send(chunk.clone())
                 .await
                 .expect("failed to send data to io task");
 
             if use_cache {
-                debug!(target: "process_upload", "receiving data into buffer");
+                debug!("receiving data into buffer");
                 if data.len() + chunk.len() > data.capacity() {
-                    error!(target: "process_upload", "the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload.");
+                    error!("the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload.");
 
                     // if we receive too much data, drop the buffer and stop using cache (it is still okay to use disk, probably)
                     data = BytesMut::new();
@@ -180,9 +183,11 @@ impl Engine {
         if use_cache {
             let mut cache = self.cache.write().await;
 
-            info!(target: "process_upload", "caching upload!");
+            info!("caching upload!");
             cache.insert(name, data.freeze());
         }
+
+        info!("finished processing upload!!");
 
         // if all goes well, increment the cached upload counter
         self.upl_count.fetch_add(1, Ordering::Relaxed);
@@ -228,7 +233,7 @@ impl Engine {
         let cached_data = self.read_cached_upload(&name).await;
 
         if let Some(data) = cached_data {
-            info!(target: "get_upload", "got upload from cache!!");
+            info!("got upload from cache!!");
 
             return Ok(ViewSuccess::FromCache(data));
         } else {
@@ -241,7 +246,7 @@ impl Engine {
                 .expect("failed to read upload file metadata")
                 .len() as usize;
 
-            debug!(target: "get_upload", "read upload from disk, size = {}", length);
+            debug!("read upload from disk, size = {}", length);
 
             // if the upload is okay to cache, recache it and send a fromcache response
             if self.will_use_cache(length) {
@@ -268,12 +273,12 @@ impl Engine {
                 let mut cache = self.cache.write().await;
                 cache.insert(name, data.clone());
 
-                info!(target: "get_upload", "recached upload from disk!");
+                info!(/*  */"recached upload from disk!");
 
                 return Ok(ViewSuccess::FromCache(data));
             }
 
-            info!(target: "get_upload", "got upload from disk!");
+            info!("got upload from disk!");
 
             return Ok(ViewSuccess::FromDisk(file));
         }

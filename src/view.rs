@@ -20,8 +20,8 @@ pub enum ViewSuccess {
 }
 
 pub enum ViewError {
-    NotFound,
-    InternalServerError,
+    NotFound, // 404
+    InternalServerError, // 500
 }
 
 impl IntoResponse for ViewSuccess {
@@ -80,9 +80,10 @@ pub async fn view(
         .into_iter()
         .any(|x| !matches!(x, Component::Normal(_)))
     {
-        warn!(target: "view", "a request attempted path traversal");
+        warn!("a request attempted path traversal");
         return Err(ViewError::NotFound);
     }
 
+    // get result from the engine!
     engine.get_upload(&original_path).await
 }

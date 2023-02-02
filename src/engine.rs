@@ -273,7 +273,7 @@ impl Engine {
                 let mut cache = self.cache.write().await;
                 cache.insert(name, data.clone());
 
-                info!(/*  */"recached upload from disk!");
+                info!("recached upload from disk!");
 
                 return Ok(ViewSuccess::FromCache(data));
             }

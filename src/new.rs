@@ -13,18 +13,18 @@ pub async fn new(
     Query(params): Query<HashMap<String, String>>,
     stream: BodyStream,
 ) -> Result<String, StatusCode> {
-    let original_name = params.get("name");
-
-    // the original file name wasn't given, so i can't work out what the extension should be
-    if original_name.is_none() {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
     let key = params.get("key");
 
     // check upload key, if i need to
     if !engine.upload_key.is_empty() && key.unwrap_or(&String::new()) != &engine.upload_key {
         return Err(StatusCode::FORBIDDEN);
+    }
+
+    let original_name = params.get("name");
+
+    // the original file name wasn't given, so i can't work out what the extension should be
+    if original_name.is_none() {
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     let original_path = PathBuf::from(original_name.unwrap());

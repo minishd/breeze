@@ -8,3 +8,14 @@ pub async fn index(State(engine): State<Arc<crate::engine::Engine>>) -> String {
 
     format!("minish's image host, currently hosting {} files", count)
 }
+
+// robots.txt that tells web crawlers not to list uploads
+const ROBOTS_TXT: &'static str = concat!(
+    "User-Agent: *\n",
+    "Disallow: /p/*\n",
+    "Allow: /\n"
+);
+
+pub async fn robots_txt() -> &'static str {
+    ROBOTS_TXT
+}

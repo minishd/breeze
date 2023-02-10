@@ -45,7 +45,7 @@ async fn main() {
 
     if upload_key.is_empty() {
         // i would prefer this to be a warning but the default log level hides those
-        error!("upload key is empty! no key will be required for uploading new files");
+        error!("upload key (BRZ_UPLOAD_KEY) is empty! no key will be required for uploading new files");
     }
 
     // create engine
@@ -64,6 +64,7 @@ async fn main() {
         .route("/new", post(new::new))
         .route("/p/:name", get(view::view))
         .route("/", get(index::index))
+        .route("/robots.txt", get(index::robots_txt))
         .with_state(Arc::new(engine));
 
     // start web server

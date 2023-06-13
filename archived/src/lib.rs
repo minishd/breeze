@@ -138,14 +138,13 @@ impl Archive {
 
         let entry = self.cache_table.get_mut(key);
 
-        if entry.is_some() {
-            let mut entry = entry.unwrap();
+        match entry {
+            Some(entry) => {
+                entry.expiration_time = now + self.entry_lifetime;
 
-            entry.expiration_time = now + self.entry_lifetime;
-
-            return Some(());
-        } else {
-            return None;
+                Some(())
+            }
+            None => None
         }
     }
 

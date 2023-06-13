@@ -1,5 +1,5 @@
 # breeze
-breeze is a simple, heavily optimised file upload server.
+breeze is a simple, performant file upload server.
 
 ## Features
 Compared to the old Express.js backend, breeze has
@@ -18,20 +18,40 @@ Either way, you need to start off by cloning the Git repository.
 git clone https://git.min.rip/minish/breeze.git
 ```
 
-To run it in Docker, you need to build an image of it.
-```bash
-docker build -t breeze .
+To run it in Docker, I recommend using Docker Compose. An example `docker-compose.yaml` configuration is below.
 ```
-From there, you can make a `docker-compose.yaml` file with your configuration and run it using `docker-compose up`.
+version: '3.6'
 
-It can also be installed directly if you have the Rust toolchain installed
+services:
+  breeze:
+    build: ./breeze
+    restart: unless-stopped
+
+    volumes:
+      - /srv/uploads:/data
+
+    ports:
+      - 8000:8000
+
+    environment:
+      - BRZ_BASE_URL=http://127.0.0.1:8000
+      - BRZ_SAVE_PATH=/data
+      - BRZ_UPLOAD_KEY=hiiiiiiii
+      - BRZ_CACHE_UPL_MAX_LENGTH=134217728 # allow files up to ~134 MiB to be cached
+      - BRZ_CACHE_UPL_LIFETIME=1800 # let uploads stay in cache for 30 minutes
+      - BRZ_CACHE_SCAN_FREQ=60 # scan the cache for expired files if more than 60 seconds have passed since the last scan
+      - BRZ_CACHE_MEM_CAPACITY=4294967296 # allow 4 GiB of data to be in the cache at once
+```
+For this configuration, it is expected that there is a clone of the Git repository in the `./breeze` folder. You can start it using `docker compose up -d`.
+
+It can also be installed directly if you have the Rust toolchain installed:
 ```bash
 cargo install --path .
 ```
 
 ## Usage
 ### Hosting
-Configuration is read through environment variables, because I wanted to run this using `docker-compose`.
+Configuration is read through environment variables, because I wanted to run this using Docker Compose.
 ```
 BRZ_BASE_URL - base url for upload urls (ex: http://127.0.0.1:8000 for http://127.0.0.1:8000/p/abcdef.png, http://picture.wtf for http://picture.wtf/p/abcdef.png)
 BRZ_SAVE_PATH - this should be a path where uploads are saved to disk (ex: /srv/uploads, C:\brzuploads)

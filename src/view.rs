@@ -73,21 +73,11 @@ impl IntoResponse for ViewSuccess {
             }
             ViewSuccess::FromCache(data) => {
                 // extract mutable headers from the response
-                let mut res = data.clone().into_response();
+                let mut res = data.into_response();
                 let headers = res.headers_mut();
 
                 // clear the headers, let the browser imply it
                 headers.clear();
-
-                /* // we do not need this for FromCache because it works fine
-                // read the length of the data as a string
-                let len_str = data.len().to_string();
-
-                // HeaderValue::from_str will never error if only visible ASCII characters are passed (32-127)
-                // .. so this should be fine
-                let content_length = HeaderValue::from_str(&len_str).unwrap();
-                headers.append("Content-Length", content_length);
-                */
 
                 res
             }
@@ -124,7 +114,6 @@ pub async fn view(
     // (hopefully) prevent path traversal, just check for any non-file components
     if original_path
         .components()
-        .into_iter()
         .any(|x| !matches!(x, Component::Normal(_)))
     {
         warn!("a request attempted path traversal");

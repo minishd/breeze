@@ -10,7 +10,7 @@ pub async fn index(State(engine): State<Arc<crate::engine::Engine>>) -> String {
 }
 
 // robots.txt that tells web crawlers not to list uploads
-const ROBOTS_TXT: &'static str = concat!(
+const ROBOTS_TXT: &str = concat!(
     "User-Agent: *\n",
     "Disallow: /p/*\n",
     "Allow: /\n"

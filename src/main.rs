@@ -34,10 +34,10 @@ async fn main() {
 
     // parse env vars
     let save_path = PathBuf::from(save_path);
-    let cache_max_length = usize::from_str_radix(&cache_max_length, 10).expect("failed parsing BRZ_CACHE_UPL_MAX_LENGTH! it should be a positive number without any separators");
-    let cache_upl_lifetime = Duration::from_secs(u64::from_str_radix(&cache_upl_lifetime, 10).expect("failed parsing BRZ_CACHE_UPL_LIFETIME! it should be a positive number without any separators"));
-    let cache_scan_freq = Duration::from_secs(u64::from_str_radix(&cache_scan_freq, 10).expect("failed parsing BRZ_CACHE_SCAN_FREQ! it should be a positive number without any separators"));
-    let cache_mem_capacity = usize::from_str_radix(&cache_mem_capacity, 10).expect("failed parsing BRZ_CACHE_MEM_CAPACITY! it should be a positive number without any separators");
+    let cache_max_length = cache_max_length.parse::<usize>().expect("failed parsing BRZ_CACHE_UPL_MAX_LENGTH! it should be a positive number without any separators");
+    let cache_upl_lifetime = Duration::from_secs(cache_upl_lifetime.parse::<u64>().expect("failed parsing BRZ_CACHE_UPL_LIFETIME! it should be a positive number without any separators"));
+    let cache_scan_freq = Duration::from_secs(cache_scan_freq.parse::<u64>().expect("failed parsing BRZ_CACHE_SCAN_FREQ! it should be a positive number without any separators"));
+    let cache_mem_capacity = cache_mem_capacity.parse::<usize>().expect("failed parsing BRZ_CACHE_MEM_CAPACITY! it should be a positive number without any separators");
 
     if !save_path.exists() || !save_path.is_dir() {
         panic!("the save path does not exist or is not a directory! this is invalid");

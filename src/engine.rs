@@ -1,6 +1,6 @@
 use std::{
     ffi::OsStr,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -67,7 +67,7 @@ impl Engine {
     }
 
     // checks in cache or disk for an upload using a pathbuf
-    pub async fn upload_exists(&self, path: &PathBuf) -> bool {
+    pub async fn upload_exists(&self, path: &Path) -> bool {
         let cache = self.cache.read().await;
 
         // check if upload is in cache
@@ -86,7 +86,7 @@ impl Engine {
             return true;
         }
 
-        return false;
+        false
     }
 
     // generate a new save path for an upload
@@ -199,20 +199,20 @@ impl Engine {
     async fn read_cached_upload(&self, name: &String) -> Option<Bytes> {
         let cache = self.cache.read().await;
 
-        if !cache.contains_key(&name) {
+        if !cache.contains_key(name) {
             return None;
         }
 
         // fetch upload data from cache
         let data = cache
-            .get(&name)
+            .get(name)
             .expect("failed to read get upload data from cache")
             .to_owned();
 
         Some(data)
     }
 
-    pub async fn get_upload(&self, original_path: &PathBuf) -> Result<ViewSuccess, ViewError> {
+    pub async fn get_upload(&self, original_path: &Path) -> Result<ViewSuccess, ViewError> {
         // extract upload file name
         let name = original_path
             .file_name()
@@ -235,7 +235,7 @@ impl Engine {
         if let Some(data) = cached_data {
             info!("got upload from cache!!");
 
-            return Ok(ViewSuccess::FromCache(data));
+            Ok(ViewSuccess::FromCache(data))
         } else {
             let mut file = File::open(&path).await.unwrap();
 
@@ -280,7 +280,7 @@ impl Engine {
 
             info!("got upload from disk!");
 
-            return Ok(ViewSuccess::FromDisk(file));
+            Ok(ViewSuccess::FromDisk(file))
         }
     }
 }

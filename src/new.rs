@@ -43,7 +43,7 @@ pub async fn new(
         .get(header::CONTENT_LENGTH)
         .unwrap_or(&HeaderValue::from_static(""))
         .to_str()
-        .and_then(|s| Ok(usize::from_str_radix(s, 10)))
+        .map(|s| s.parse::<usize>())
         .unwrap()
         .unwrap_or(usize::MAX);
 
@@ -51,6 +51,6 @@ pub async fn new(
     engine
         .process_upload(path, name, content_length, stream)
         .await;
-    
+
     Ok(url)
 }

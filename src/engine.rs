@@ -86,7 +86,7 @@ impl Engine {
             return true;
         }
 
-        false
+        return false;
     }
 
     // generate a new save path for an upload

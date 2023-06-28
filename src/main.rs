@@ -21,7 +21,7 @@ mod view;
 #[tokio::main]
 async fn main() {
     // initialise logger
-    env_logger::init();
+    pretty_env_logger::init();
 
     // read env vars
     let base_url = env::var("BRZ_BASE_URL").expect("missing BRZ_BASE_URL! base url for upload urls (ex: http://127.0.0.1:8000 for http://127.0.0.1:8000/p/abcdef.png, http://picture.wtf for http://picture.wtf/p/abcdef.png)");

@@ -13,22 +13,43 @@ use bytes::Bytes;
 use hyper::{http::HeaderValue, StatusCode};
 use tokio::{fs::File, runtime::Handle};
 use tokio_util::io::ReaderStream;
+use tracing::{error, debug, warn};
 
+/// Responses for a successful view operation
 pub enum ViewSuccess {
+    /// A file read from disk, suitable for larger files.
+    /// 
+    /// The file provided will be streamed from disk and
+    /// back to the viewer.
+    /// 
+    /// This is only ever used if a file exceeds the
+    /// cache's maximum file size.
     FromDisk(File),
+
+    /// A file read from in-memory cache, best for smaller files.
+    /// 
+    /// The file is taken from the cache in its entirety
+    /// and sent back to the viewer.
+    /// 
+    /// If a file can be fit into cache, this will be
+    /// used even if it's read from disk.
     FromCache(Bytes),
 }
 
+/// Responses for a failed view operation
 pub enum ViewError {
-    NotFound,            // 404
-    InternalServerError, // 500
+    /// Will send status code 404 witha plaintext "not found" message.
+    NotFound,
+
+    /// Will send status code 500 with a plaintext "internal server error" message.
+    InternalServerError,
 }
 
 impl IntoResponse for ViewSuccess {
     fn into_response(self) -> Response {
         match self {
             ViewSuccess::FromDisk(file) => {
-                // get handle to current runtime
+                // get handle to current tokio runtime
                 // i use this to block on futures here (not async)
                 let handle = Handle::current();
                 let _ = handle.enter();
@@ -88,24 +109,21 @@ impl IntoResponse for ViewSuccess {
 impl IntoResponse for ViewError {
     fn into_response(self) -> Response {
         match self {
-            ViewError::NotFound => {
-                // convert string into response, change status code
-                let mut res = "not found!".into_response();
-                *res.status_mut() = StatusCode::NOT_FOUND;
-
-                res
-            }
-            ViewError::InternalServerError => {
-                // convert string into response, change status code
-                let mut res = "internal server error!".into_response();
-                *res.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
-
-                res
-            }
+            ViewError::NotFound => (
+                StatusCode::NOT_FOUND,
+                "not found!"
+            ).into_response(),
+            
+            ViewError::InternalServerError => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal server error!"
+            ).into_response(),
         }
     }
 }
 
+/// The request handler for /p/* path.
+/// All file views are handled here.
 #[axum::debug_handler]
 pub async fn view(
     State(engine): State<Arc<crate::engine::Engine>>,

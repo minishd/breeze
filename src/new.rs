@@ -6,17 +6,21 @@ use axum::{
 };
 use hyper::{header, HeaderMap, StatusCode};
 
+/// The request handler for the /new path.
+/// This handles all new uploads.
 #[axum::debug_handler]
 pub async fn new(
     State(engine): State<Arc<crate::engine::Engine>>,
-    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
     stream: BodyStream,
 ) -> Result<String, StatusCode> {
     let key = params.get("key");
 
+    const EMPTY_STRING: &String = &String::new();
+
     // check upload key, if i need to
-    if !engine.upload_key.is_empty() && key.unwrap_or(&String::new()) != &engine.upload_key {
+    if !engine.upload_key.is_empty() && key.unwrap_or(EMPTY_STRING) != &engine.upload_key {
         return Err(StatusCode::FORBIDDEN);
     }
 

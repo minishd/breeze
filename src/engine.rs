@@ -18,25 +18,40 @@ use tokio::{
     },
 };
 use tokio_stream::StreamExt;
+use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
 use crate::view::{ViewError, ViewSuccess};
 
+/// breeze engine! this is the core of everything
 pub struct Engine {
-    // state
-    cache: RwLock<Archive>,     // in-memory cache
-    pub upl_count: AtomicUsize, // cached count of uploaded files
+    // ------ STATE ------ //
+    /// The in-memory cache that cached uploads are stored in.
+    cache: RwLock<Archive>,
 
-    // config
-    pub base_url: String,   // base url for formatting upload urls
-    save_path: PathBuf,     // where uploads are saved to disk
-    pub upload_key: String, // authorisation key for uploading new files
+    /// Cached count of uploaded files.
+    pub upl_count: AtomicUsize,
 
-    cache_max_length: usize, // if an upload is bigger than this size, it won't be cached
+    // ------ CONFIG ------ //
+    /// The base URL that the server will be accessed from.
+    /// It is only used for formatting returned upload URLs.
+    pub base_url: String,
+
+    /// The path on disk that uploads are saved to.
+    save_path: PathBuf,
+
+    /// The authorisation key required for uploading new files.
+    /// If it is empty, no key will be required.
+    pub upload_key: String,
+
+    /// The maximum size for an upload to be stored in cache.
+    /// Anything bigger skips cache and is read/written to
+    /// directly from disk.
+    cache_max_length: usize,
 }
 
 impl Engine {
-    // create a new engine
+    /// Creates a new instance of the breeze engine.
     pub fn new(
         base_url: String,
         save_path: PathBuf,
@@ -62,26 +77,29 @@ impl Engine {
         }
     }
 
+    /// Returns if an upload would be able to be cached
+    #[inline(always)]
     fn will_use_cache(&self, length: usize) -> bool {
         length <= self.cache_max_length
     }
 
-    // checks in cache or disk for an upload using a pathbuf
+    /// Check if an upload exists in cache or on disk
     pub async fn upload_exists(&self, path: &Path) -> bool {
         let cache = self.cache.read().await;
 
-        // check if upload is in cache
+        // extract file name, since that's what cache uses
         let name = path
             .file_name()
             .and_then(OsStr::to_str)
             .unwrap_or_default()
             .to_string();
 
+        // check in cache
         if cache.contains_key(&name) {
             return true;
         }
 
-        // check if upload is on disk
+        // check on disk
         if path.exists() {
             return true;
         }
@@ -89,7 +107,10 @@ impl Engine {
         return false;
     }
 
-    // generate a new save path for an upload
+    /// Generate a new save path for an upload.
+    ///
+    /// This will call itself recursively if it picks
+    /// a name that's already used. (it is rare)
     #[async_recursion::async_recursion]
     pub async fn gen_path(&self, original_path: &PathBuf) -> PathBuf {
         // generate a 6-character alphanumeric string
@@ -119,7 +140,8 @@ impl Engine {
         }
     }
 
-    // process an upload. this is called by the new route
+    /// Process an upload.
+    /// This is called by the /new route.
     pub async fn process_upload(
         &self,
         path: PathBuf,
@@ -193,25 +215,20 @@ impl Engine {
         self.upl_count.fetch_add(1, Ordering::Relaxed);
     }
 
-    // read an upload from cache, if it exists
-    // previously, this would lock the cache as writable to renew the upload's cache lifespan
-    // locking the cache as readable allows multiple concurrent readers, which allows me to handle multiple views concurrently
+    /// Read an upload from cache, if it exists.
+    ///
+    /// Previously, this would lock the cache as
+    /// writable to renew the upload's cache lifespan.
+    /// Locking the cache as readable allows multiple concurrent
+    /// readers though, which allows me to handle multiple views concurrently.
     async fn read_cached_upload(&self, name: &String) -> Option<Bytes> {
         let cache = self.cache.read().await;
 
-        if !cache.contains_key(name) {
-            return None;
-        }
-
         // fetch upload data from cache
-        let data = cache
-            .get(name)
-            .expect("failed to read get upload data from cache")
-            .to_owned();
-
-        Some(data)
+        cache.get(name).map(ToOwned::to_owned)
     }
 
+    /// Reads an upload, from cache or on disk.
     pub async fn get_upload(&self, original_path: &Path) -> Result<ViewSuccess, ViewError> {
         // extract upload file name
         let name = original_path
@@ -233,18 +250,24 @@ impl Engine {
         let cached_data = self.read_cached_upload(&name).await;
 
         if let Some(data) = cached_data {
-            info!("got upload from cache!!");
+            info!("got upload from cache!");
 
             Ok(ViewSuccess::FromCache(data))
         } else {
+            // we already know the upload exists by now so this is okay
             let mut file = File::open(&path).await.unwrap();
 
             // read upload length from disk
-            let length = file
-                .metadata()
-                .await
-                .expect("failed to read upload file metadata")
-                .len() as usize;
+            let metadata = file.metadata().await;
+
+            if metadata.is_err() {
+                error!("failed to get upload file metadata!");
+                return Err(ViewError::InternalServerError);
+            }
+
+            let metadata = metadata.unwrap();
+
+            let length = metadata.len() as usize;
 
             debug!("read upload from disk, size = {}", length);
 

@@ -15,7 +15,7 @@ I wrote breeze with the intention of running it in a container, but it runs just
 
 Either way, you need to start off by cloning the Git repository.
 ```bash
-git clone https://git.min.rip/minish/breeze.git
+git clone https://git.min.rip/min/breeze.git
 ```
 
 To run it in Docker, I recommend using Docker Compose. An example `docker-compose.yaml` configuration is below.

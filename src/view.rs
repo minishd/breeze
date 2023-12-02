@@ -13,7 +13,7 @@ use bytes::Bytes;
 use hyper::{http::HeaderValue, StatusCode};
 use tokio::{fs::File, runtime::Handle};
 use tokio_util::io::ReaderStream;
-use tracing::{error, debug, warn};
+use tracing::{error, debug, info};
 
 /// Responses for a successful view operation
 pub enum ViewSuccess {
@@ -134,7 +134,7 @@ pub async fn view(
         .components()
         .any(|x| !matches!(x, Component::Normal(_)))
     {
-        warn!("a request attempted path traversal");
+        info!("a request attempted path traversal");
         return Err(ViewError::NotFound);
     }
 

@@ -38,7 +38,7 @@ pub enum ViewSuccess {
 
 /// Responses for a failed view operation
 pub enum ViewError {
-    /// Will send status code 404 witha plaintext "not found" message.
+    /// Will send status code 404 with a plaintext "not found" message.
     NotFound,
 
     /// Will send status code 500 with a plaintext "internal server error" message.

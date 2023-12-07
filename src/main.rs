@@ -11,7 +11,6 @@ use axum::{
 };
 use tokio::{fs, signal};
 use tracing::{info, warn};
-use tracing_subscriber::filter::LevelFilter;
 
 mod config;
 mod engine;
@@ -35,30 +34,22 @@ async fn main() {
         .await
         .expect("failed to read config file! make sure it exists and you have read permissions");
 
-    let c: config::Config = toml::from_str(&config_str).expect("invalid config! check that you have included all required options and structured it properly (no config options expecting a number getting a string, etc.)");
+    let cfg: config::Config = toml::from_str(&config_str).expect("invalid config! check that you have included all required options and structured it properly (no config options expecting a number getting a string, etc.)");
 
     tracing_subscriber::fmt()
-        .with_max_level(c.logger.level.unwrap_or(LevelFilter::WARN))
+        .with_max_level(cfg.logger.level)
         .init();
 
-    if !c.engine.save_path.exists() || !c.engine.save_path.is_dir() {
+    if !cfg.engine.save_path.exists() || !cfg.engine.save_path.is_dir() {
         panic!("the save path does not exist or is not a directory! this is invalid");
     }
 
-    if c.engine.upload_key.is_none() {
+    if cfg.engine.upload_key.is_empty() {
         warn!("engine upload_key is empty! no key will be required for uploading new files");
     }
 
     // create engine
-    let engine = Engine::new(
-        c.engine.base_url,
-        c.engine.save_path,
-        c.engine.upload_key.unwrap_or_default(),
-        c.cache.max_length,
-        c.cache.upload_lifetime,
-        c.cache.scan_freq,
-        c.cache.mem_capacity,
-    );
+    let engine = Engine::new(cfg.engine);
 
     // build main router
     let app = Router::new()
@@ -69,11 +60,16 @@ async fn main() {
         .with_state(Arc::new(engine));
 
     // start web server
-    axum::Server::bind(&"0.0.0.0:8000".parse().unwrap())
-        .serve(app.into_make_service())
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
+    axum::Server::bind(
+        &cfg.http
+            .listen_on
+            .parse()
+            .expect("failed to parse listen_on address"),
+    )
+    .serve(app.into_make_service())
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("failed to start server");
 }
 
 async fn shutdown_signal() {

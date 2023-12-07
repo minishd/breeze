@@ -29,7 +29,11 @@ impl Archive {
         }
     } */
 
-    pub fn with_full_scan(full_scan_frequency: Duration, entry_lifetime: Duration, capacity: usize) -> Self {
+    pub fn with_full_scan(
+        full_scan_frequency: Duration,
+        entry_lifetime: Duration,
+        capacity: usize,
+    ) -> Self {
         Self {
             cache_table: HashMap::with_capacity(256),
             full_scan_frequency: Some(full_scan_frequency),
@@ -67,11 +71,7 @@ impl Archive {
             .map(|cache_entry| &cache_entry.value)
     }
 
-    pub fn get_or_insert<F>(
-        &mut self,
-        key: String,
-        factory: F,
-    ) -> &Bytes
+    pub fn get_or_insert<F>(&mut self, key: String, factory: F) -> &Bytes
     where
         F: Fn() -> Bytes,
     {
@@ -87,15 +87,15 @@ impl Archive {
 
                 &occupied.into_mut().value
             }
-            Entry::Vacant(vacant) => &vacant.insert(CacheEntry::new(factory(), self.entry_lifetime)).value,
+            Entry::Vacant(vacant) => {
+                &vacant
+                    .insert(CacheEntry::new(factory(), self.entry_lifetime))
+                    .value
+            }
         }
     }
 
-    pub fn insert(
-        &mut self,
-        key: String,
-        value: Bytes,
-    ) -> Option<Bytes> {
+    pub fn insert(&mut self, key: String, value: Bytes) -> Option<Bytes> {
         let now = SystemTime::now();
 
         self.try_full_scan_expired_items(now);
@@ -144,7 +144,7 @@ impl Archive {
 
                 Some(())
             }
-            None => None
+            None => None,
         }
     }
 

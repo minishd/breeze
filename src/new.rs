@@ -20,7 +20,7 @@ pub async fn new(
     const EMPTY_STRING: &String = &String::new();
 
     // check upload key, if i need to
-    if !engine.upload_key.is_empty() && key.unwrap_or(EMPTY_STRING) != &engine.upload_key {
+    if !engine.cfg.upload_key.is_empty() && key.unwrap_or(EMPTY_STRING) != &engine.cfg.upload_key {
         return Err(StatusCode::FORBIDDEN);
     }
 
@@ -40,7 +40,7 @@ pub async fn new(
         .unwrap_or_default()
         .to_string();
 
-    let url = format!("{}/p/{}", engine.base_url, name);
+    let url = format!("{}/p/{}", engine.cfg.base_url, name);
 
     // read and parse content-length, and if it fails just assume it's really high so it doesn't cache
     let content_length = headers

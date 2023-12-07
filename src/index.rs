@@ -6,7 +6,11 @@ use axum::extract::State;
 pub async fn index(State(engine): State<Arc<crate::engine::Engine>>) -> String {
     let count = engine.upl_count.load(Ordering::Relaxed);
 
-    format!("minish's image host, currently hosting {} files", count)
+    let motd = engine.cfg.motd.clone();
+
+    motd
+        .replace("%version%", env!("CARGO_PKG_VERSION"))
+        .replace("%uplcount%", &count.to_string())
 }
 
 pub async fn robots_txt() -> &'static str {

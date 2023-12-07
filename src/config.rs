@@ -7,7 +7,7 @@ use tracing_subscriber::filter::LevelFilter;
 #[derive(Deserialize)]
 pub struct Config {
     pub engine: EngineConfig,
-    pub cache: CacheConfig,
+    pub http: HttpConfig,
     pub logger: LoggerConfig,
 }
 
@@ -22,7 +22,18 @@ pub struct EngineConfig {
     pub save_path: PathBuf,
 
     /// Authentication key for new uploads, will be required if this is specified. (optional)
-    pub upload_key: Option<String>,
+    #[serde(default)]
+    pub upload_key: String,
+
+    /// Configuration for cache system
+    pub cache: CacheConfig,
+
+    /// Motd displayed when the server's index page is visited.
+    /// 
+    /// This isn't explicitly engine-related but the engine is what gets passed to routes,
+    /// so it is here for now.
+    #[serde(default = "default_motd")]
+    pub motd: String,
 }
 
 #[serde_as]
@@ -45,11 +56,26 @@ pub struct CacheConfig {
     pub mem_capacity: usize,
 }
 
+fn default_motd() -> String {
+    "breeze file server (v%version%) - currently hosting %uplcount% files".to_string()
+}
+
+#[derive(Deserialize)]
+pub struct HttpConfig {
+    pub listen_on: String,
+}
+
+fn default_level_filter() -> LevelFilter {
+    LevelFilter::WARN
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 pub struct LoggerConfig {
     /// Minimum level a log must be for it to be shown.
     /// This defaults to "warn" if not specified.
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    pub level: Option<LevelFilter>,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_level_filter")]
+    // yes... kind of a hack but serde doesn't have anything better
+    pub level: LevelFilter,
 }

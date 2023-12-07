@@ -2,7 +2,6 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::atomic::{AtomicUsize, Ordering},
-    time::Duration,
 };
 
 use archived::Archive;
@@ -21,66 +20,47 @@ use tokio_stream::StreamExt;
 use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
-use crate::view::{ViewError, ViewSuccess};
+use crate::{
+    config,
+    view::{ViewError, ViewSuccess},
+};
 
 /// breeze engine! this is the core of everything
 pub struct Engine {
-    // ------ STATE ------ //
     /// The in-memory cache that cached uploads are stored in.
     cache: RwLock<Archive>,
 
     /// Cached count of uploaded files.
     pub upl_count: AtomicUsize,
 
-    // ------ CONFIG ------ //
-    /// The base URL that the server will be accessed from.
-    /// It is only used for formatting returned upload URLs.
-    pub base_url: String,
-
-    /// The path on disk that uploads are saved to.
-    save_path: PathBuf,
-
-    /// The authorisation key required for uploading new files.
-    /// If it is empty, no key will be required.
-    pub upload_key: String,
-
-    /// The maximum size for an upload to be stored in cache.
-    /// Anything bigger skips cache and is read/written to
-    /// directly from disk.
-    cache_max_length: usize,
+    /// Engine configuration
+    pub cfg: config::EngineConfig,
 }
 
 impl Engine {
     /// Creates a new instance of the breeze engine.
-    pub fn new(
-        base_url: String,
-        save_path: PathBuf,
-        upload_key: String,
-        cache_max_length: usize,
-        cache_lifetime: Duration,
-        cache_full_scan_freq: Duration, // how often the cache will be scanned for expired items
-        cache_mem_capacity: usize,
-    ) -> Self {
+    pub fn new(cfg: config::EngineConfig) -> Self {
         Self {
             cache: RwLock::new(Archive::with_full_scan(
-                cache_full_scan_freq,
-                cache_lifetime,
-                cache_mem_capacity,
+                cfg.cache.scan_freq,
+                cfg.cache.upload_lifetime,
+                cfg.cache.mem_capacity,
             )),
-            upl_count: AtomicUsize::new(WalkDir::new(&save_path).min_depth(1).into_iter().count()), // count the amount of files in the save path and initialise our cached count with it
+            upl_count: AtomicUsize::new(
+                WalkDir::new(&cfg.save_path)
+                    .min_depth(1)
+                    .into_iter()
+                    .count(),
+            ), // count the amount of files in the save path and initialise our cached count with it
 
-            base_url,
-            save_path,
-            upload_key,
-
-            cache_max_length,
+            cfg,
         }
     }
 
     /// Returns if an upload would be able to be cached
     #[inline(always)]
     fn will_use_cache(&self, length: usize) -> bool {
-        length <= self.cache_max_length
+        length <= self.cfg.cache.max_length
     }
 
     /// Check if an upload exists in cache or on disk
@@ -128,7 +108,7 @@ impl Engine {
             .to_string();
 
         // path on disk
-        let mut path = self.save_path.clone();
+        let mut path = self.cfg.save_path.clone();
         path.push(&id);
         path.set_extension(original_extension);
 
@@ -238,7 +218,7 @@ impl Engine {
             .to_string();
 
         // path on disk
-        let mut path = self.save_path.clone();
+        let mut path = self.cfg.save_path.clone();
         path.push(&name);
 
         // check if the upload exists, if not then 404

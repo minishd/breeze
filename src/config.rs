@@ -11,6 +11,10 @@ pub struct Config {
     pub logger: LoggerConfig,
 }
 
+fn default_motd() -> String {
+    "breeze file server (v%version%) - currently hosting %uplcount% files".to_string()
+}
+
 #[derive(Deserialize)]
 pub struct EngineConfig {
     /// The url that the instance of breeze is meant to be accessed from.
@@ -54,10 +58,6 @@ pub struct CacheConfig {
 
     /// How much memory the cache is allowed to use (in bytes)
     pub mem_capacity: usize,
-}
-
-fn default_motd() -> String {
-    "breeze file server (v%version%) - currently hosting %uplcount% files".to_string()
 }
 
 #[derive(Deserialize)]

@@ -21,7 +21,8 @@ mod view;
 #[derive(Parser, Debug)]
 struct Args {
     /// The path to configuration file
-    config: Option<PathBuf>,
+    #[arg(short, long, value_name = "file")]
+    config: PathBuf,
 }
 
 #[tokio::main]
@@ -30,7 +31,7 @@ async fn main() {
     let args = Args::parse();
 
     // read & parse config
-    let config_str = fs::read_to_string(args.config.unwrap_or("./breeze.toml".into()))
+    let config_str = fs::read_to_string(args.config)
         .await
         .expect("failed to read config file! make sure it exists and you have read permissions");
 

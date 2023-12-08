@@ -6,7 +6,7 @@ COPY . .
 RUN cargo install --path .
 
 # runner
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && rm -rf /var/lib/apt/lists/*
 
@@ -16,4 +16,4 @@ RUN useradd -m runner
 USER runner
 
 EXPOSE 8000
-CMD [ "breeze" ]
+CMD [ "breeze", "--config", "/etc/breeze.toml" ]

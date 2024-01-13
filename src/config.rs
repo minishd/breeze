@@ -33,7 +33,7 @@ pub struct EngineConfig {
     pub cache: CacheConfig,
 
     /// Motd displayed when the server's index page is visited.
-    /// 
+    ///
     /// This isn't explicitly engine-related but the engine is what gets passed to routes,
     /// so it is here for now.
     #[serde(default = "default_motd")]
@@ -75,7 +75,7 @@ pub struct LoggerConfig {
     /// Minimum level a log must be for it to be shown.
     /// This defaults to "warn" if not specified.
     #[serde_as(as = "DisplayFromStr")]
-    #[serde(default = "default_level_filter")]
     // yes... kind of a hack but serde doesn't have anything better
+    #[serde(default = "default_level_filter")]
     pub level: LevelFilter,
 }

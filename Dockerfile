@@ -12,8 +12,4 @@ RUN apt-get update && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/cargo/bin/breeze /usr/local/bin/breeze
 
-RUN useradd -m runner
-USER runner
-
-EXPOSE 8000
 CMD [ "breeze", "--config", "/etc/breeze.toml" ]

@@ -10,7 +10,6 @@ use axum::{
 
 use hyper::{http::HeaderValue, StatusCode};
 use tokio_util::io::ReaderStream;
-use tracing::info;
 
 use crate::engine::UploadData;
 

@@ -208,7 +208,7 @@ impl Engine {
             // if we have an i/o task, send it off
             // also cloning this is okay because it's a Bytes
             if !coalesce_and_strip {
-                info!("sending chunk to i/o task");
+                debug!("sending chunk to i/o task");
                 tx.map(|tx| tx.send(chunk.clone()));
             }
 
@@ -240,7 +240,7 @@ impl Engine {
                     img.encoder().bytes()
                 })
             }) {
-                info!("stripped exif data");
+                debug!("stripped exif data");
                 data
             } else {
                 data

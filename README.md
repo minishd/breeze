@@ -35,6 +35,8 @@ services:
       - /srv/uploads:/data
       - ./breeze.toml:/etc/breeze.toml
 
+    user: 1000:1000
+
     ports:
       - 8383:8000
 ```
@@ -43,6 +45,7 @@ For this configuration, it is expected that:
 * there is a `breeze.toml` config file in current directory
 * there is a directory at `/srv/uploads` for storing uploads
 * port 8383 will be made accessible to the Internet somehow (either forwarding the port through your firewall directly, or passing it through a reverse proxy)
+* you want the uploads to be owned by the user on your system with id 1000. (this is usually your user)
 
 It can also be installed directly if you have the Rust toolchain installed:
 ```bash

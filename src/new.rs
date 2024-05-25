@@ -1,46 +1,57 @@
-use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::Arc};
+use std::{ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     extract::{BodyStream, Query, State},
     http::HeaderValue,
 };
 use hyper::{header, HeaderMap, StatusCode};
+use serde::Deserialize;
+use serde_with::{serde_as, DurationSeconds};
+
+use crate::engine::ProcessOutcome;
+
+fn default_keep_exif() -> bool {
+    false
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+pub struct NewRequest {
+    name: String,
+    key: Option<String>,
+
+    #[serde(rename = "lastfor")]
+    #[serde_as(as = "Option<DurationSeconds>")]
+    last_for: Option<Duration>,
+
+    #[serde(rename = "keepexif", default = "default_keep_exif")]
+    keep_exif: bool,
+}
 
 /// The request handler for the /new path.
 /// This handles all new uploads.
 #[axum::debug_handler]
 pub async fn new(
     State(engine): State<Arc<crate::engine::Engine>>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(req): Query<NewRequest>,
     headers: HeaderMap,
     stream: BodyStream,
 ) -> Result<String, StatusCode> {
-    let key = params.get("key");
-
-    const EMPTY_STRING: &String = &String::new();
-
     // check upload key, if i need to
-    if !engine.cfg.upload_key.is_empty() && key.unwrap_or(EMPTY_STRING) != &engine.cfg.upload_key {
+    if !engine.cfg.upload_key.is_empty() && req.key.unwrap_or_default() != engine.cfg.upload_key {
         return Err(StatusCode::FORBIDDEN);
     }
 
-    let original_name = params.get("name");
-
     // the original file name wasn't given, so i can't work out what the extension should be
-    if original_name.is_none() {
+    if req.name.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let original_path = PathBuf::from(original_name.unwrap());
-
-    let path = engine.gen_path(&original_path).await;
-    let name = path
-        .file_name()
+    let extension = PathBuf::from(req.name)
+        .extension()
         .and_then(OsStr::to_str)
         .unwrap_or_default()
         .to_string();
-
-    let url = format!("{}/p/{}", engine.cfg.base_url, name);
 
     // read and parse content-length, and if it fails just assume it's really high so it doesn't cache
     let content_length = headers
@@ -52,9 +63,30 @@ pub async fn new(
         .unwrap_or(usize::MAX);
 
     // pass it off to the engine to be processed!
-    engine
-        .process_upload(path, name, content_length, stream)
-        .await;
+    match engine
+        .process(
+            &extension,
+            content_length,
+            stream,
+            req.last_for,
+            req.keep_exif,
+        )
+        .await
+    {
+        Ok(outcome) => match outcome {
+            // 200 OK
+            ProcessOutcome::Success(url) => Ok(url),
 
-    Ok(url)
+            // 413 Payload Too Large
+            ProcessOutcome::TemporaryUploadTooLarge => {
+                Err(StatusCode::PAYLOAD_TOO_LARGE)
+            }
+
+            // 400 Bad Request
+            ProcessOutcome::TemporaryUploadLifetimeTooLong => Err(StatusCode::BAD_REQUEST),
+        },
+        
+        // 500 Internal Server Error
+        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }

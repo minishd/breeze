@@ -1,6 +1,5 @@
 use std::{
-    path::{Component, PathBuf},
-    sync::Arc,
+    ffi::OsStr, path::PathBuf, sync::Arc
 };
 
 use axum::{
@@ -9,32 +8,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use bytes::Bytes;
 use hyper::{http::HeaderValue, StatusCode};
-use tokio::{fs::File, runtime::Handle};
 use tokio_util::io::ReaderStream;
-use tracing::{error, debug, info};
+use tracing::info;
 
-/// Responses for a successful view operation
-pub enum ViewSuccess {
-    /// A file read from disk, suitable for larger files.
-    /// 
-    /// The file provided will be streamed from disk and
-    /// back to the viewer.
-    /// 
-    /// This is only ever used if a file exceeds the
-    /// cache's maximum file size.
-    FromDisk(File),
-
-    /// A file read from in-memory cache, best for smaller files.
-    /// 
-    /// The file is taken from the cache in its entirety
-    /// and sent back to the viewer.
-    /// 
-    /// If a file can be fit into cache, this will be
-    /// used even if it's read from disk.
-    FromCache(Bytes),
-}
+use crate::engine::UploadData;
 
 /// Responses for a failed view operation
 pub enum ViewError {
@@ -45,34 +23,12 @@ pub enum ViewError {
     InternalServerError,
 }
 
-impl IntoResponse for ViewSuccess {
+impl IntoResponse for UploadData {
     fn into_response(self) -> Response {
         match self {
-            ViewSuccess::FromDisk(file) => {
-                // get handle to current tokio runtime
-                // i use this to block on futures here (not async)
-                let handle = Handle::current();
-                let _ = handle.enter();
-
-                // read the metadata of the file on disk
-                // this function isn't async
-                // .. so we have to use handle.block_on() to get the metadata
-                let metadata = futures::executor::block_on(file.metadata());
-
-                // if we error then return 500
-                if metadata.is_err() {
-                    error!("failed to read metadata from disk");
-                    return ViewError::InternalServerError.into_response();
-                }
-
-                // unwrap (which we know is safe) and read the file size as a string
-                let metadata = metadata.unwrap();
-                let len_str = metadata.len().to_string();
-
-                debug!("file is {} bytes on disk", &len_str);
-
-                // HeaderValue::from_str will never error if only visible ASCII characters are passed (32-127)
-                // .. so unwrapping this should be fine
+            UploadData::Disk(file, len) => {
+                // create our content-length header
+                let len_str = len.to_string();
                 let content_length = HeaderValue::from_str(&len_str).unwrap();
 
                 // create a streamed body response (we want to stream larger files)
@@ -92,7 +48,7 @@ impl IntoResponse for ViewSuccess {
 
                 res
             }
-            ViewSuccess::FromCache(data) => {
+            UploadData::Cache(data) => {
                 // extract mutable headers from the response
                 let mut res = data.into_response();
                 let headers = res.headers_mut();
@@ -128,16 +84,17 @@ impl IntoResponse for ViewError {
 pub async fn view(
     State(engine): State<Arc<crate::engine::Engine>>,
     Path(original_path): Path<PathBuf>,
-) -> Result<ViewSuccess, ViewError> {
-    // (hopefully) prevent path traversal, just check for any non-file components
-    if original_path
-        .components()
-        .any(|x| !matches!(x, Component::Normal(_)))
-    {
-        info!("a request attempted path traversal");
+) -> Result<UploadData, ViewError> {
+    let saved_name = if let Some(Some(n)) = original_path.file_name().map(OsStr::to_str) {
+        n
+    } else {
         return Err(ViewError::NotFound);
-    }
+    };
 
     // get result from the engine!
-    engine.get_upload(&original_path).await
+    match engine.get(saved_name).await {
+        Ok(Some(u)) => Ok(u),
+        Ok(None) => Err(ViewError::NotFound),
+        Err(_) => Err(ViewError::InternalServerError),
+    }
 }

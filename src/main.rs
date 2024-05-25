@@ -1,7 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
 
-extern crate axum;
-
 use clap::Parser;
 use engine::Engine;
 
@@ -12,7 +10,9 @@ use axum::{
 use tokio::{fs, signal};
 use tracing::{info, warn};
 
+mod cache;
 mod config;
+mod disk;
 mod engine;
 mod index;
 mod new;
@@ -41,8 +41,11 @@ async fn main() {
         .with_max_level(cfg.logger.level)
         .init();
 
-    if !cfg.engine.save_path.exists() || !cfg.engine.save_path.is_dir() {
-        panic!("the save path does not exist or is not a directory! this is invalid");
+    {
+        let save_path = cfg.engine.disk.save_path.clone();
+        if !save_path.exists() || !save_path.is_dir() {
+            panic!("the save path does not exist or is not a directory! this is invalid");
+        }
     }
 
     if cfg.engine.upload_key.is_empty() {
@@ -50,7 +53,7 @@ async fn main() {
     }
 
     // create engine
-    let engine = Engine::new(cfg.engine);
+    let engine = Engine::from_config(cfg.engine);
 
     // build main router
     let app = Router::new()

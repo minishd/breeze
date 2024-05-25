@@ -1,176 +1,222 @@
 use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
-use archived::Archive;
 use axum::extract::BodyStream;
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::Rng;
-use tokio::{
-    fs::File,
-    io::{AsyncReadExt, AsyncWriteExt},
-    sync::{
-        mpsc::{self, Receiver, Sender},
-        RwLock,
-    },
-};
+use img_parts::{DynImage, ImageEXIF};
+use rand::distributions::{Alphanumeric, DistString};
+use tokio::{fs::File, io::AsyncReadExt};
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info};
-use walkdir::WalkDir;
+use tracing::{debug, info};
 
-use crate::{
-    config,
-    view::{ViewError, ViewSuccess},
-};
+use crate::{cache, config, disk};
+
+/// Various forms of upload data that can be sent to the client
+pub enum UploadData {
+    /// Send back the data from memory
+    Cache(Bytes),
+
+    /// Stream the file from disk to the client
+    Disk(File, usize),
+}
+
+/// Rejection outcomes of an [`Engine::process`] call
+pub enum ProcessOutcome {
+    /// The upload was successful.
+    /// We give the user their file's URL
+    Success(String),
+
+    /// Occurs when a temporary upload is too big to fit in the cache.
+    TemporaryUploadTooLarge,
+
+    /// Occurs when the user-given lifetime is longer than we will allow
+    TemporaryUploadLifetimeTooLong,
+}
 
 /// breeze engine! this is the core of everything
 pub struct Engine {
-    /// The in-memory cache that cached uploads are stored in.
-    cache: RwLock<Archive>,
-
     /// Cached count of uploaded files.
     pub upl_count: AtomicUsize,
 
     /// Engine configuration
     pub cfg: config::EngineConfig,
+
+    /// The in-memory cache that cached uploads are stored in.
+    cache: Arc<cache::Cache>,
+
+    /// An interface to the on-disk upload store
+    disk: disk::Disk,
 }
 
 impl Engine {
     /// Creates a new instance of the breeze engine.
-    pub fn new(cfg: config::EngineConfig) -> Self {
+    pub fn from_config(cfg: config::EngineConfig) -> Self {
+        let cache = cache::Cache::from_config(cfg.cache.clone());
+        let disk = disk::Disk::from_config(cfg.disk.clone());
+
+        let cache = Arc::new(cache);
+
+        let cache_scanner = cache.clone();
+        tokio::spawn(async move { cache_scanner.scanner().await });
+
         Self {
-            cache: RwLock::new(Archive::with_full_scan(
-                cfg.cache.scan_freq,
-                cfg.cache.upload_lifetime,
-                cfg.cache.mem_capacity,
-            )),
-            upl_count: AtomicUsize::new(
-                WalkDir::new(&cfg.save_path)
-                    .min_depth(1)
-                    .into_iter()
-                    .count(),
-            ), // count the amount of files in the save path and initialise our cached count with it
+            // initialise our cached upload count. this doesn't include temp uploads!
+            upl_count: AtomicUsize::new(disk.count()),
 
             cfg,
+
+            cache,
+            disk,
         }
     }
 
-    /// Returns if an upload would be able to be cached
-    #[inline(always)]
-    fn will_use_cache(&self, length: usize) -> bool {
-        length <= self.cfg.cache.max_length
+    /// Fetch an upload
+    /// 
+    /// This will first try to read from cache, and then disk after.
+    /// If an upload is eligible to be cached, it will be cached and
+    /// sent back as a cache response instead of a disk response.
+    pub async fn get(&self, saved_name: &str) -> anyhow::Result<Option<UploadData>> {
+        // check the cache first
+        if let Some(u) = self.cache.get(saved_name) {
+            return Ok(Some(UploadData::Cache(u)));
+        }
+
+        // now, check if we have it on disk
+        let mut f = if let Some(f) = self.disk.open(saved_name).await? {
+            f
+        } else {
+            // file didn't exist
+            return Ok(None);
+        };
+
+        let len = self.disk.len(&f).await?;
+
+        // can this be recached?
+        if self.cache.will_use(len) {
+            // read file from disk
+            let mut full = BytesMut::with_capacity(len);
+
+            // read file from disk and if it fails at any point, return 500
+            loop {
+                match f.read_buf(&mut full).await {
+                    Ok(n) => {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                    Err(e) => Err(e)?,
+                }
+            }
+
+            let full = full.freeze();
+
+            // re-insert it into cache
+            self.cache.add(saved_name, full.clone());
+
+            return Ok(Some(UploadData::Cache(full)));
+        }
+
+        Ok(Some(UploadData::Disk(f, len)))
     }
 
-    /// Check if an upload exists in cache or on disk
-    pub async fn upload_exists(&self, path: &Path) -> bool {
-        let cache = self.cache.read().await;
-
-        // extract file name, since that's what cache uses
-        let name = path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default()
-            .to_string();
-
-        // check in cache
-        if cache.contains_key(&name) {
+    pub async fn has(&self, saved_name: &str) -> bool {
+        if self.cache.has(saved_name) {
             return true;
         }
 
-        // check on disk
-        if path.exists() {
+        // sidestep handling the error properly
+        // that way we can call this in gen_saved_name easier
+        if self.disk.open(saved_name).await.is_ok_and(|f| f.is_some()) {
             return true;
         }
 
-        return false;
+        false
     }
 
-    /// Generate a new save path for an upload.
+    /// Generate a new saved name for an upload.
     ///
     /// This will call itself recursively if it picks
     /// a name that's already used. (it is rare)
     #[async_recursion::async_recursion]
-    pub async fn gen_path(&self, original_path: &PathBuf) -> PathBuf {
+    pub async fn gen_saved_name(&self, ext: &str) -> String {
         // generate a 6-character alphanumeric string
-        let id: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(6)
-            .map(char::from)
-            .collect();
-
-        // extract the extension from the original path
-        let original_extension = original_path
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default()
-            .to_string();
+        let id: String = Alphanumeric.sample_string(&mut rand::thread_rng(), 6);
 
         // path on disk
-        let mut path = self.cfg.save_path.clone();
-        path.push(&id);
-        path.set_extension(original_extension);
+        let saved_name = format!("{}.{}", id, ext);
 
-        if !self.upload_exists(&path).await {
-            path
+        if !self.has(&saved_name).await {
+            saved_name
         } else {
             // we had a name collision! try again..
-            self.gen_path(original_path).await
+            info!("name collision! saved_name= {}", saved_name);
+            self.gen_saved_name(ext).await
         }
     }
 
-    /// Process an upload.
-    /// This is called by the /new route.
-    pub async fn process_upload(
+    /// Save a file to disk, and optionally cache.
+    /// 
+    /// This also handles custom file lifetimes and EXIF data removal.
+    pub async fn save(
         &self,
-        path: PathBuf,
-        name: String, // we already extract it in the route handler, and it'd be wasteful to do it in gen_path
-        content_length: usize,
+        saved_name: &str,
+        provided_len: usize,
+        mut use_cache: bool,
         mut stream: BodyStream,
-    ) {
-        // if the upload size is smaller than the specified maximum, we use the cache!
-        let mut use_cache = self.will_use_cache(content_length);
-
+        lifetime: Option<Duration>,
+        keep_exif: bool,
+    ) -> Result<(), axum::Error> {
         // if we're using cache, make some space to store the upload in
         let mut data = if use_cache {
-            BytesMut::with_capacity(content_length)
+            BytesMut::with_capacity(provided_len)
         } else {
             BytesMut::new()
         };
 
-        // start a task that handles saving files to disk (we can save to cache/disk in parallel that way)
-        let (tx, mut rx): (Sender<Bytes>, Receiver<Bytes>) = mpsc::channel(1);
+        // don't begin a disk save if we're using temporary lifetimes
+        let tx = if lifetime.is_none() {
+            Some(self.disk.start_save(saved_name).await)
+        } else {
+            None
+        };
 
-        tokio::spawn(async move {
-            // create file to save upload to
-            let mut file = File::create(path)
-                .await
-                .expect("could not open file! make sure your upload path is valid");
+        let tx: Option<&_> = tx.as_ref();
 
-            // receive chunks and save them to file
-            while let Some(chunk) = rx.recv().await {
-                debug!("writing chunk to disk (length: {})", chunk.len());
-                file.write_all(&chunk)
-                    .await
-                    .expect("error while writing file to disk");
-            }
-        });
+        // whether or not we're gonna coalesce the data
+        // in order to strip the exif data at the end,
+        // instead of just sending it off to the i/o task
+        let coalesce_and_strip = use_cache
+            && matches!(
+                std::path::Path::new(saved_name)
+                    .extension()
+                    .map(|s| s.to_str()),
+                Some(Some("png" | "jpg" | "jpeg" | "webp" | "tiff"))
+            )
+            && !keep_exif
+            && provided_len <= 16_777_216;
 
         // read and save upload
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.unwrap();
+            // if we error on a chunk, fail out
+            let chunk = chunk?;
 
-            // send chunk to io task
-            debug!("sending data to io task");
-            tx.send(chunk.clone())
-                .await
-                .expect("failed to send data to io task");
+            // if we have an i/o task, send it off
+            // also cloning this is okay because it's a Bytes
+            if !coalesce_and_strip {
+                info!("sending chunk to i/o task");
+                tx.map(|tx| tx.send(chunk.clone()));
+            }
 
             if use_cache {
                 debug!("receiving data into buffer");
+
                 if data.len() + chunk.len() > data.capacity() {
-                    error!("the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload.");
+                    info!("the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload.");
 
                     // if we receive too much data, drop the buffer and stop using cache (it is still okay to use disk, probably)
                     data = BytesMut::new();
@@ -181,109 +227,90 @@ impl Engine {
             }
         }
 
-        // insert upload into cache if necessary
-        if use_cache {
-            let mut cache = self.cache.write().await;
+        let data = data.freeze();
 
+        // we coalesced the data instead of streaming to disk,
+        // strip the exif data and send it off now
+        let data = if coalesce_and_strip {
+            // strip the exif if we can
+            // if we can't, then oh well
+            let data = if let Ok(Some(data)) = DynImage::from_bytes(data.clone()).map(|o| {
+                o.map(|mut img| {
+                    img.set_exif(None);
+                    img.encoder().bytes()
+                })
+            }) {
+                info!("stripped exif data");
+                data
+            } else {
+                data
+            };
+
+            // send what we did over to the i/o task, all in one chunk
+            tx.map(|tx| tx.send(data.clone()));
+
+            data
+        } else {
+            // or, we didn't do that
+            // keep the data as it is
+            data
+        };
+
+        // insert upload into cache if we're using it
+        if use_cache {
             info!("caching upload!");
-            cache.insert(name, data.freeze());
+            match lifetime {
+                Some(lt) => self.cache.add_with_lifetime(saved_name, data, lt, false),
+                None => self.cache.add(saved_name, data),
+            };
         }
 
         info!("finished processing upload!!");
 
         // if all goes well, increment the cached upload counter
         self.upl_count.fetch_add(1, Ordering::Relaxed);
+
+        Ok(())
     }
 
-    /// Read an upload from cache, if it exists.
-    ///
-    /// Previously, this would lock the cache as
-    /// writable to renew the upload's cache lifespan.
-    /// Locking the cache as readable allows multiple concurrent
-    /// readers though, which allows me to handle multiple views concurrently.
-    async fn read_cached_upload(&self, name: &String) -> Option<Bytes> {
-        let cache = self.cache.read().await;
+    pub async fn process(
+        &self,
+        ext: &str,
+        provided_len: usize,
+        stream: BodyStream,
+        lifetime: Option<Duration>,
+        keep_exif: bool,
+    ) -> Result<ProcessOutcome, axum::Error> {
+        // if the upload size is smaller than the specified maximum, we use the cache!
+        let use_cache: bool = self.cache.will_use(provided_len);
 
-        // fetch upload data from cache
-        cache.get(name).map(ToOwned::to_owned)
-    }
-
-    /// Reads an upload, from cache or on disk.
-    pub async fn get_upload(&self, original_path: &Path) -> Result<ViewSuccess, ViewError> {
-        // extract upload file name
-        let name = original_path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default()
-            .to_string();
-
-        // path on disk
-        let mut path = self.cfg.save_path.clone();
-        path.push(&name);
-
-        // check if the upload exists, if not then 404
-        if !self.upload_exists(&path).await {
-            return Err(ViewError::NotFound);
+        // if a temp file is too big for cache, reject it now
+        if lifetime.is_some() && !use_cache {
+            return Ok(ProcessOutcome::TemporaryUploadTooLarge);
         }
 
-        // attempt to read upload from cache
-        let cached_data = self.read_cached_upload(&name).await;
-
-        if let Some(data) = cached_data {
-            info!("got upload from cache!");
-
-            Ok(ViewSuccess::FromCache(data))
-        } else {
-            // we already know the upload exists by now so this is okay
-            let mut file = File::open(&path).await.unwrap();
-
-            // read upload length from disk
-            let metadata = file.metadata().await;
-
-            if metadata.is_err() {
-                error!("failed to get upload file metadata!");
-                return Err(ViewError::InternalServerError);
-            }
-
-            let metadata = metadata.unwrap();
-
-            let length = metadata.len() as usize;
-
-            debug!("read upload from disk, size = {}", length);
-
-            // if the upload is okay to cache, recache it and send a fromcache response
-            if self.will_use_cache(length) {
-                // read file from disk
-                let mut data = BytesMut::with_capacity(length);
-
-                // read file from disk and if it fails at any point, return 500
-                loop {
-                    match file.read_buf(&mut data).await {
-                        Ok(n) => {
-                            if n == 0 {
-                                break;
-                            }
-                        }
-                        Err(_) => {
-                            return Err(ViewError::InternalServerError);
-                        }
-                    }
-                }
-
-                let data = data.freeze();
-
-                // re-insert it into cache
-                let mut cache = self.cache.write().await;
-                cache.insert(name, data.clone());
-
-                info!("recached upload from disk!");
-
-                return Ok(ViewSuccess::FromCache(data));
-            }
-
-            info!("got upload from disk!");
-
-            Ok(ViewSuccess::FromDisk(file))
+        // if a temp file's lifetime is too long, reject it now
+        if lifetime.is_some_and(|lt| lt > self.cfg.max_temp_lifetime) {
+            return Ok(ProcessOutcome::TemporaryUploadLifetimeTooLong);
         }
+
+        // generate the file name
+        let saved_name = self.gen_saved_name(ext).await;
+
+        // save it
+        self.save(
+            &saved_name,
+            provided_len,
+            use_cache,
+            stream,
+            lifetime,
+            keep_exif,
+        )
+        .await?;
+
+        // format and send back the url
+        let url = format!("{}/p/{}", self.cfg.base_url, saved_name);
+
+        Ok(ProcessOutcome::Success(url))
     }
 }

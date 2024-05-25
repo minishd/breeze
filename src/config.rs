@@ -15,6 +15,7 @@ fn default_motd() -> String {
     "breeze file server (v%version%) - currently hosting %uplcount% files".to_string()
 }
 
+#[serde_as]
 #[derive(Deserialize)]
 pub struct EngineConfig {
     /// The url that the instance of breeze is meant to be accessed from.
@@ -22,15 +23,19 @@ pub struct EngineConfig {
     /// ex: https://picture.wtf would generate links like https://picture.wtf/p/abcdef.png
     pub base_url: String,
 
-    /// Location on disk the uploads are to be saved to
-    pub save_path: PathBuf,
-
     /// Authentication key for new uploads, will be required if this is specified. (optional)
     #[serde(default)]
     pub upload_key: String,
 
+    /// Configuration for disk system
+    pub disk: DiskConfig,
+
     /// Configuration for cache system
     pub cache: CacheConfig,
+
+    /// Maximum lifetime of a temporary upload
+    #[serde_as(as = "DurationSeconds")]
+    pub max_temp_lifetime: Duration,
 
     /// Motd displayed when the server's index page is visited.
     ///
@@ -40,8 +45,14 @@ pub struct EngineConfig {
     pub motd: String,
 }
 
+#[derive(Deserialize, Clone)]
+pub struct DiskConfig {
+    /// Location on disk the uploads are to be saved to
+    pub save_path: PathBuf,
+}
+
 #[serde_as]
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct CacheConfig {
     /// The maximum length in bytes that a file can be
     /// before it skips cache (in seconds)

@@ -185,8 +185,6 @@ impl Engine {
             None
         };
 
-        let tx: Option<&_> = tx.as_ref();
-
         // whether or not we're gonna coalesce the data
         // in order to strip the exif data at the end,
         // instead of just sending it off to the i/o task
@@ -209,7 +207,9 @@ impl Engine {
             // also cloning this is okay because it's a Bytes
             if !coalesce_and_strip {
                 debug!("sending chunk to i/o task");
-                tx.map(|tx| tx.send(chunk.clone()));
+                if let Some(ref tx) = tx {
+                    let _ = tx.send(chunk.clone()).await;
+                }
             }
 
             if use_cache {
@@ -240,14 +240,18 @@ impl Engine {
                     img.encoder().bytes()
                 })
             }) {
-                debug!("stripped exif data");
+                info!("stripped exif data");
                 data
             } else {
+                info!("failed to strip exif data");
                 data
             };
 
             // send what we did over to the i/o task, all in one chunk
-            tx.map(|tx| tx.send(data.clone()));
+            debug!("sending filled buffer to i/o task");
+            if let Some(ref tx) = tx {
+                let _ = tx.send(data.clone()).await;
+            }
 
             data
         } else {

@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use axum::extract::BodyStream;
+use axum::body::BodyDataStream;
 use bytes::{BufMut, Bytes, BytesMut};
 use img_parts::{DynImage, ImageEXIF};
 use rand::distributions::{Alphanumeric, DistString};
@@ -167,7 +167,7 @@ impl Engine {
         saved_name: &str,
         provided_len: usize,
         mut use_cache: bool,
-        mut stream: BodyStream,
+        mut stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
     ) -> Result<(), axum::Error> {
@@ -206,8 +206,8 @@ impl Engine {
             // if we have an i/o task, send it off
             // also cloning this is okay because it's a Bytes
             if !coalesce_and_strip {
-                debug!("sending chunk to i/o task");
                 if let Some(ref tx) = tx {
+                    debug!("sending chunk to i/o task");
                     let _ = tx.send(chunk.clone()).await;
                 }
             }
@@ -248,8 +248,8 @@ impl Engine {
             };
 
             // send what we did over to the i/o task, all in one chunk
-            debug!("sending filled buffer to i/o task");
             if let Some(ref tx) = tx {
+                debug!("sending filled buffer to i/o task");
                 let _ = tx.send(data.clone()).await;
             }
 
@@ -281,7 +281,7 @@ impl Engine {
         &self,
         ext: &str,
         provided_len: usize,
-        stream: BodyStream,
+        stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
     ) -> Result<ProcessOutcome, axum::Error> {

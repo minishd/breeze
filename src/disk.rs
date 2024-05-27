@@ -33,7 +33,7 @@ impl Disk {
     /// Formats the path on disk for a `saved_name`.
     fn path_for(&self, saved_name: &str) -> PathBuf {
         let mut p = self.cfg.save_path.clone();
-        p.push(&saved_name);
+        p.push(saved_name);
 
         p
     }

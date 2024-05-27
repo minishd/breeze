@@ -1,10 +1,10 @@
 use std::{ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
-    extract::{BodyStream, Query, State},
-    http::HeaderValue,
+    body::Body,
+    extract::{Query, State},
 };
-use hyper::{header, HeaderMap, StatusCode};
+use http::{header, HeaderMap, HeaderValue, StatusCode};
 use serde::Deserialize;
 use serde_with::{serde_as, DurationSeconds};
 
@@ -35,7 +35,7 @@ pub async fn new(
     State(engine): State<Arc<crate::engine::Engine>>,
     Query(req): Query<NewRequest>,
     headers: HeaderMap,
-    stream: BodyStream,
+    body: Body,
 ) -> Result<String, StatusCode> {
     // check upload key, if i need to
     if !engine.cfg.upload_key.is_empty() && req.key.unwrap_or_default() != engine.cfg.upload_key {
@@ -62,6 +62,9 @@ pub async fn new(
         .unwrap()
         .unwrap_or(usize::MAX);
 
+    // turn body into stream
+    let stream = Body::into_data_stream(body);
+
     // pass it off to the engine to be processed!
     match engine
         .process(
@@ -78,14 +81,12 @@ pub async fn new(
             ProcessOutcome::Success(url) => Ok(url),
 
             // 413 Payload Too Large
-            ProcessOutcome::TemporaryUploadTooLarge => {
-                Err(StatusCode::PAYLOAD_TOO_LARGE)
-            }
+            ProcessOutcome::TemporaryUploadTooLarge => Err(StatusCode::PAYLOAD_TOO_LARGE),
 
             // 400 Bad Request
             ProcessOutcome::TemporaryUploadLifetimeTooLong => Err(StatusCode::BAD_REQUEST),
         },
-        
+
         // 500 Internal Server Error
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
     }

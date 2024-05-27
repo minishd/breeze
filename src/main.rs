@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use tokio::{fs, signal};
+use tokio::{fs, net::TcpListener, signal};
 use tracing::{info, warn};
 
 mod cache;
@@ -64,16 +64,14 @@ async fn main() {
         .with_state(Arc::new(engine));
 
     // start web server
-    axum::Server::bind(
-        &cfg.http
-            .listen_on
-            .parse()
-            .expect("failed to parse listen_on address"),
-    )
-    .serve(app.into_make_service())
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .expect("failed to start server");
+    let listener = TcpListener::bind(&cfg.http.listen_on)
+        .await
+        .expect("failed to bind to given `http.listen_on` address! make sure it's valid, and the port isn't already bound");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("failed to start server");
 }
 
 async fn shutdown_signal() {

@@ -3,12 +3,12 @@ use std::{
 };
 
 use axum::{
-    body::StreamBody,
+    body::Body,
     extract::{Path, State},
     response::{IntoResponse, Response},
 };
 
-use hyper::{http::HeaderValue, StatusCode};
+use http::{HeaderValue, StatusCode};
 use tokio_util::io::ReaderStream;
 
 use crate::engine::UploadData;
@@ -31,11 +31,11 @@ impl IntoResponse for UploadData {
                 let content_length = HeaderValue::from_str(&len_str).unwrap();
 
                 // create a streamed body response (we want to stream larger files)
-                let reader = ReaderStream::new(file);
-                let stream = StreamBody::new(reader);
+                let stream = ReaderStream::new(file);
+                let body = Body::from_stream(stream);
 
                 // extract mutable headers from the response
-                let mut res = stream.into_response();
+                let mut res = body.into_response();
                 let headers = res.headers_mut();
 
                 // clear headers, browser can imply content type

@@ -84,6 +84,12 @@ motd = "my image host, currently hosting %uplcount% files"
 # cached anyways.
 max_temp_lifetime = 43200
 
+# The maximum length (in bytes) an image file may be before the server
+# will skip removing its EXIF data.
+# The performance impact of breeze's EXIF data removal is not
+# very high in everyday usage, so something like 16MiB is reasonable.
+max_strip_len = 16_777_216
+
 [engine.disk]
 # The location that uploads will be saved to.
 # It should be a path to a directory on disk that you can write to.

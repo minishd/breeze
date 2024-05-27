@@ -37,6 +37,10 @@ pub struct EngineConfig {
     #[serde_as(as = "DurationSeconds")]
     pub max_temp_lifetime: Duration,
 
+    /// Maximum length (in bytes) a file can be before the server will
+    /// decide not to remove its EXIF data.
+    pub max_strip_len: usize,
+
     /// Motd displayed when the server's index page is visited.
     ///
     /// This isn't explicitly engine-related but the engine is what gets passed to routes,
@@ -73,6 +77,7 @@ pub struct CacheConfig {
 
 #[derive(Deserialize)]
 pub struct HttpConfig {
+    /// The IP address the HTTP server should listen on
     pub listen_on: String,
 }
 

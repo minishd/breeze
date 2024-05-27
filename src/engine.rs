@@ -76,7 +76,7 @@ impl Engine {
     }
 
     /// Fetch an upload
-    /// 
+    ///
     /// This will first try to read from cache, and then disk after.
     /// If an upload is eligible to be cached, it will be cached and
     /// sent back as a cache response instead of a disk response.
@@ -160,7 +160,7 @@ impl Engine {
     }
 
     /// Save a file to disk, and optionally cache.
-    /// 
+    ///
     /// This also handles custom file lifetimes and EXIF data removal.
     pub async fn save(
         &self,
@@ -196,7 +196,7 @@ impl Engine {
                 Some(Some("png" | "jpg" | "jpeg" | "webp" | "tiff"))
             )
             && !keep_exif
-            && provided_len <= 16_777_216;
+            && provided_len <= self.cfg.max_strip_len;
 
         // read and save upload
         while let Some(chunk) = stream.next().await {

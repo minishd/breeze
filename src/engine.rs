@@ -170,7 +170,7 @@ impl Engine {
         mut stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
-    ) -> Result<(), axum::Error> {
+    ) -> Result<(), anyhow::Error> {
         // if we're using cache, make some space to store the upload in
         let mut data = if use_cache {
             BytesMut::with_capacity(provided_len)
@@ -208,7 +208,7 @@ impl Engine {
             if !coalesce_and_strip {
                 if let Some(ref tx) = tx {
                     debug!("sending chunk to i/o task");
-                    let _ = tx.send(chunk.clone()).await;
+                    tx.send(chunk.clone()).await?;
                 }
             }
 
@@ -250,7 +250,7 @@ impl Engine {
             // send what we did over to the i/o task, all in one chunk
             if let Some(ref tx) = tx {
                 debug!("sending filled buffer to i/o task");
-                let _ = tx.send(data.clone()).await;
+                tx.send(data.clone()).await?;
             }
 
             data
@@ -284,7 +284,7 @@ impl Engine {
         stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
-    ) -> Result<ProcessOutcome, axum::Error> {
+    ) -> Result<ProcessOutcome, anyhow::Error> {
         // if the upload size is smaller than the specified maximum, we use the cache!
         let use_cache: bool = self.cache.will_use(provided_len);
 

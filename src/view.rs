@@ -1,6 +1,4 @@
-use std::{
-    ffi::OsStr, path::PathBuf, sync::Arc
-};
+use std::{ffi::OsStr, path::PathBuf, sync::Arc};
 
 use axum::{
     body::Body,

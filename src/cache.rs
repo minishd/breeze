@@ -178,9 +178,10 @@ impl Cache {
             // drop the reference so we don't deadlock
             drop(e);
 
-            // remove it and say we never had it
+            // remove it
             self.remove(key);
 
+            // and say we never had it
             return None;
         }
 
@@ -230,14 +231,29 @@ impl Cache {
             // If we don't do this it'll be a LOT of system api calls
             let now = SystemTime::now();
 
-            // Drop every expired entry
-            // If we fail to compare the times, we drop the entry
-            self.map.retain(|_, e| {
-                let elapsed = now.duration_since(e.last_used()).unwrap_or(Duration::MAX);
-                let is_expired = elapsed >= e.lifetime;
+            // Collect a list of all the expired keys
+            // If we fail to compare the times, it gets added to the list anyways
+            let expired: Vec<_> = self
+                .map
+                .par_iter()
+                .filter_map(|e| {
+                    let elapsed = now.duration_since(e.last_used()).unwrap_or(Duration::MAX);
+                    let is_expired = elapsed >= e.lifetime;
 
-                !is_expired
-            })
+                    if is_expired {
+                        Some(e.key().clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // If we have any, lock the map and drop all of them
+            if !expired.is_empty() {
+                // Use a retain call, should be less locks that way
+                // (instead of many remove calls)
+                self.map.retain(|k, _| !expired.contains(k))
+            }
         }
     }
 }

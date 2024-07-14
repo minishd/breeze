@@ -60,7 +60,7 @@ impl Disk {
     /// Create a background I/O task
     pub async fn start_save(&self, saved_name: &str) -> Sender<Bytes> {
         // start a task that handles saving files to disk (we can save to cache/disk in parallel that way)
-        let (tx, mut rx): (Sender<Bytes>, Receiver<Bytes>) = mpsc::channel(1);
+        let (tx, mut rx): (Sender<Bytes>, Receiver<Bytes>) = mpsc::channel(256);
 
         let p = self.path_for(saved_name);
 

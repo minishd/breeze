@@ -33,6 +33,10 @@ pub struct EngineConfig {
     /// Configuration for cache system
     pub cache: CacheConfig,
 
+    /// Maximum size of an upload that will be accepted.
+    /// Files above this size can not be uploaded.
+    pub max_upload_len: Option<usize>,
+
     /// Maximum lifetime of a temporary upload
     #[serde_as(as = "DurationSeconds")]
     pub max_temp_lifetime: Duration,

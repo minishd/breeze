@@ -31,6 +31,9 @@ pub enum ProcessOutcome {
     /// We give the user their file's URL
     Success(String),
 
+    /// Occurs when an upload exceeds the chosen maximum file size.
+    UploadTooLarge,
+
     /// Occurs when a temporary upload is too big to fit in the cache.
     TemporaryUploadTooLarge,
 
@@ -285,6 +288,11 @@ impl Engine {
         lifetime: Option<Duration>,
         keep_exif: bool,
     ) -> Result<ProcessOutcome, anyhow::Error> {
+        // if the upload size is greater than our max file size, deny it now
+        if self.cfg.max_upload_len.is_some_and(|l| provided_len > l) {
+            return Ok(ProcessOutcome::UploadTooLarge);
+        }
+
         // if the upload size is smaller than the specified maximum, we use the cache!
         let use_cache: bool = self.cache.will_use(provided_len);
 

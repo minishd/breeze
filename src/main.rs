@@ -68,6 +68,7 @@ async fn main() {
         .await
         .expect("failed to bind to given `http.listen_on` address! make sure it's valid, and the port isn't already bound");
 
+    info!("starting server.");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

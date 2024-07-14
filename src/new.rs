@@ -81,7 +81,9 @@ pub async fn new(
             ProcessOutcome::Success(url) => Ok(url),
 
             // 413 Payload Too Large
-            ProcessOutcome::TemporaryUploadTooLarge => Err(StatusCode::PAYLOAD_TOO_LARGE),
+            ProcessOutcome::UploadTooLarge | ProcessOutcome::TemporaryUploadTooLarge => {
+                Err(StatusCode::PAYLOAD_TOO_LARGE)
+            }
 
             // 400 Bad Request
             ProcessOutcome::TemporaryUploadLifetimeTooLong => Err(StatusCode::BAD_REQUEST),

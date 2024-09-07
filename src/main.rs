@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use clap::Parser;
+use argh::FromArgs;
 use engine::Engine;
 
 use axum::{
@@ -18,24 +18,29 @@ mod index;
 mod new;
 mod view;
 
-#[derive(Parser, Debug)]
+/// breeze file server.
+#[derive(FromArgs, Debug)]
 struct Args {
-    /// The path to configuration file
-    #[arg(short, long, value_name = "file")]
+    /// the path to *.toml configuration file
+    #[argh(option, short = 'c', arg_name = "file")]
     config: PathBuf,
 }
 
 #[tokio::main]
 async fn main() {
     // read & parse args
-    let args = Args::parse();
+    let args: Args = argh::from_env();
 
     // read & parse config
-    let config_str = fs::read_to_string(args.config)
-        .await
-        .expect("failed to read config file! make sure it exists and you have read permissions");
+    let cfg: config::Config = {
+        let config_str = fs::read_to_string(args.config).await.expect(
+            "failed to read config file! make sure it exists and you have read permissions",
+        );
 
-    let cfg: config::Config = toml::from_str(&config_str).expect("invalid config! check that you have included all required options and structured it properly (no config options expecting a number getting a string, etc.)");
+        toml::from_str(&config_str).unwrap_or_else(|e| {
+            panic!("invalid config! ensure proper fields and structure. reference config is in readme.\n{e}");
+        })
+    };
 
     tracing_subscriber::fmt()
         .with_max_level(cfg.logger.level)

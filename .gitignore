@@ -1,2 +1,5 @@
 # binaries
 /target
+
+# nix-direnv
+/.direnv

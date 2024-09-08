@@ -84,6 +84,11 @@ motd = "my image host, currently hosting %uplcount% files"
 # cached anyways.
 max_temp_lifetime = 43200
 
+# OPTIONAL - the maximum length (in bytes) a file being uploaded may be.
+# A word of warning about this: the error shown to ShareX users who
+# hit the limit is *not* very clear. ("connection closed" or similar)
+max_upload_len = 2_147_483_648
+
 # The maximum length (in bytes) an image file may be before the server
 # will skip removing its EXIF data.
 # The performance impact of breeze's EXIF data removal is not
@@ -108,7 +113,7 @@ upload_lifetime = 1800
 scan_freq = 60
 
 # How much memory (in bytes) the cache is allowed to consume.
-mem_capacity = 4_294_967_295
+mem_capacity = 4_294_967_296
 
 [http]
 # The address that the HTTP server will listen on. (ip:port)

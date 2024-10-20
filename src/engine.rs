@@ -148,10 +148,13 @@ impl Engine {
     #[async_recursion::async_recursion]
     pub async fn gen_saved_name(&self, ext: &str) -> String {
         // generate a 6-character alphanumeric string
-        let id: String = Alphanumeric.sample_string(&mut rand::thread_rng(), 6);
+        let mut saved_name: String = Alphanumeric.sample_string(&mut rand::thread_rng(), 6);
 
-        // path on disk
-        let saved_name = format!("{}.{}", id, ext);
+        // if we have an extension, add it now
+        if !ext.is_empty() {
+            saved_name.push('.');
+            saved_name.push_str(ext);
+        }
 
         if !self.has(&saved_name).await {
             saved_name

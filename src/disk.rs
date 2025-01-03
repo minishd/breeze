@@ -4,7 +4,7 @@ use bytes::Bytes;
 use tokio::{
     fs::File,
     io::{self, AsyncWriteExt},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc,
 };
 use tracing::debug;
 use walkdir::WalkDir;
@@ -18,7 +18,7 @@ pub struct Disk {
 }
 
 impl Disk {
-    pub fn from_config(cfg: config::DiskConfig) -> Self {
+    pub fn with_config(cfg: config::DiskConfig) -> Self {
         Self { cfg }
     }
 
@@ -40,7 +40,7 @@ impl Disk {
 
     /// Try to open a file on disk, and if we didn't find it,
     /// then return [`None`].
-    pub async fn open(&self, saved_name: &str) -> Result<Option<File>, io::Error> {
+    pub async fn open(&self, saved_name: &str) -> io::Result<Option<File>> {
         let p = self.path_for(saved_name);
 
         match File::open(p).await {
@@ -53,14 +53,22 @@ impl Disk {
     }
 
     /// Get the size of an upload's file
-    pub async fn len(&self, f: &File) -> Result<usize, io::Error> {
-        Ok(f.metadata().await?.len() as usize)
+    pub async fn len(&self, f: &File) -> io::Result<u64> {
+        Ok(f.metadata().await?.len())
+    }
+
+    /// Remove an upload from disk.
+    pub async fn remove(&self, saved_name: &str) -> io::Result<()> {
+        let p = self.path_for(saved_name);
+
+        tokio::fs::remove_file(p).await
     }
 
     /// Create a background I/O task
-    pub async fn start_save(&self, saved_name: &str) -> Sender<Bytes> {
+    pub async fn start_save(&self, saved_name: &str) -> mpsc::UnboundedSender<Bytes> {
         // start a task that handles saving files to disk (we can save to cache/disk in parallel that way)
-        let (tx, mut rx): (Sender<Bytes>, Receiver<Bytes>) = mpsc::channel(256);
+        let (tx, mut rx): (mpsc::UnboundedSender<Bytes>, mpsc::UnboundedReceiver<Bytes>) =
+            mpsc::unbounded_channel();
 
         let p = self.path_for(saved_name);
 

@@ -4,7 +4,9 @@ use axum::{
     body::Body,
     extract::{Query, State},
 };
-use http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum_extra::TypedHeader;
+use headers::ContentLength;
+use http::StatusCode;
 use serde::Deserialize;
 use serde_with::{serde_as, DurationSeconds};
 
@@ -34,7 +36,7 @@ pub struct NewRequest {
 pub async fn new(
     State(engine): State<Arc<crate::engine::Engine>>,
     Query(req): Query<NewRequest>,
-    headers: HeaderMap,
+    TypedHeader(ContentLength(content_length)): TypedHeader<ContentLength>,
     body: Body,
 ) -> Result<String, StatusCode> {
     // check upload key, if i need to
@@ -53,19 +55,14 @@ pub async fn new(
         .unwrap_or_default()
         .to_string();
 
-    // read and parse content-length, and if it fails just assume it's really high so it doesn't cache
-    let content_length = headers
-        .get(header::CONTENT_LENGTH)
-        .unwrap_or(&HeaderValue::from_static(""))
-        .to_str()
-        .map(|s| s.parse::<usize>())
-        .unwrap()
-        .unwrap_or(usize::MAX);
-
     // turn body into stream
     let stream = Body::into_data_stream(body);
 
-    // pass it off to the engine to be processed!
+    // pass it off to the engine to be processed
+    // --
+    // also, error responses here don't get represented properly in ShareX most of the time
+    // they don't expect the connection to close before they're done uploading, i think
+    // so it will just present the user with a "connection closed" error
     match engine
         .process(
             &extension,

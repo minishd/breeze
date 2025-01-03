@@ -1,27 +1,31 @@
 [package]
 name = "breeze"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.7.5", features = ["macros", "http2"] }
-tower = "0.4.13"
-http = "1.1.0"
+axum-extra = { version = "0.10.0", default-features = false, features = [
+    "tracing",
+    "typed-header",
+] }
+axum = { version = "0.8.1", features = ["macros", "http2"] }
+tower = "0.5"
+http = "1.2"
+headers = "0.4"
 tokio = { version = "1", features = ["full"] }
-tokio-util = { version = "0.7.4", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 bytes = "1"
-async-recursion = "1.0.0"
 rand = "0.8.5"
 walkdir = "2"
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_with = "3.4.0"
+serde_with = "3.12"
 toml = "0.8.2"
 argh = "0.1.12"
-dashmap = { version = "5.5.3", features = ["rayon", "inline"] }
+dashmap = { version = "6.1.0", features = ["rayon", "inline"] }
 rayon = "1.8"
 atomic-time = "0.1.4"
-img-parts = "0.3.0"
+img-parts = "0.3"

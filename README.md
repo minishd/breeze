@@ -4,25 +4,24 @@ breeze is a simple, performant file upload server.
 The primary instance is https://picture.wtf.
 
 ## Features
-Compared to the old Express.js backend, breeze has
+- Basic upload API tailored towards ShareX
 - Streamed uploading
 - Streamed downloading (on larger files)
-- Upload caching
-- Generally faster speeds overall
+- Upload caching in memory
 - Temporary uploads
 - Automatic exif data removal
 
-At this time, breeze does not support encrypted uploads on disk.
-
 ## Installation
-I wrote breeze with the intention of running it in a container, but it runs just fine outside of one.
+On picture.wtf, breeze's primary instance, it is ran using a NixOS module. If you would like to do that too, it is provided by the Nix flake in this repository.
 
-Either way, you need to start off by cloning the Git repository.
+It is very much possible to run and deploy breeze without doing that, though. Containerised and bare-metal deployments are also supported. Instructions for those are below.
+
+To begin, clone the Git repository:
 ```bash
 git clone https://git.min.rip/min/breeze.git
 ```
 
-To run it in Docker, I recommend using Docker Compose. An example `docker-compose.yaml` configuration is below. You can start it using `docker compose up -d`.
+If you would like to run it as a Docker container, here is an example `docker-compose.yaml` that may be useful for reference.
 ```
 version: '3.6'
 
@@ -40,14 +39,14 @@ services:
     ports:
       - 8383:8000
 ```
-For this configuration, it is expected that:
+With this configuration, it is expected that:
 * there is a clone of the Git repository in the `./breeze` folder
 * there is a `breeze.toml` config file in current directory
 * there is a directory at `/srv/uploads` for storing uploads
 * port 8383 will be made accessible to the Internet somehow (either forwarding the port through your firewall directly, or passing it through a reverse proxy)
 * you want the uploads to be owned by the user on your system with id 1000. (this is usually your user)
 
-It can also be installed directly if you have the Rust toolchain installed:
+It can also be installed directly if the Rust toolchain is installed:
 ```bash
 cargo install --path .
 ```

@@ -28,10 +28,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    // read & parse args
+    // Read & parse args
     let args: Args = argh::from_env();
 
-    // read & parse config
+    // Read & parse config
     let cfg: config::Config = {
         let config_str = fs::read_to_string(args.config).await.expect(
             "failed to read config file! make sure it exists and you have read permissions",
@@ -42,38 +42,38 @@ async fn main() {
         })
     };
 
+    // Set up tracing
     tracing_subscriber::fmt()
         .with_max_level(cfg.logger.level)
         .init();
 
+    // Check config
     {
         let save_path = cfg.engine.disk.save_path.clone();
         if !save_path.exists() || !save_path.is_dir() {
             panic!("the save path does not exist or is not a directory! this is invalid");
         }
     }
-
     if cfg.engine.upload_key.is_empty() {
         warn!("engine upload_key is empty! no key will be required for uploading new files");
     }
 
-    // create engine
-    let engine = Engine::from_config(cfg.engine);
+    // Create engine
+    let engine = Engine::with_config(cfg.engine);
 
-    // build main router
+    // Build main router
     let app = Router::new()
         .route("/new", post(new::new))
-        .route("/p/:name", get(view::view))
+        .route("/p/{saved_name}", get(view::view))
         .route("/", get(index::index))
         .route("/robots.txt", get(index::robots_txt))
         .with_state(Arc::new(engine));
 
-    // start web server
+    // Start web server
+    info!("starting server.");
     let listener = TcpListener::bind(&cfg.http.listen_on)
         .await
         .expect("failed to bind to given `http.listen_on` address! make sure it's valid, and the port isn't already bound");
-
-    info!("starting server.");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

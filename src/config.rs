@@ -35,7 +35,7 @@ pub struct EngineConfig {
 
     /// Maximum size of an upload that will be accepted.
     /// Files above this size can not be uploaded.
-    pub max_upload_len: Option<usize>,
+    pub max_upload_len: Option<u64>,
 
     /// Maximum lifetime of a temporary upload
     #[serde_as(as = "DurationSeconds")]
@@ -43,7 +43,7 @@ pub struct EngineConfig {
 
     /// Maximum length (in bytes) a file can be before the server will
     /// decide not to remove its EXIF data.
-    pub max_strip_len: usize,
+    pub max_strip_len: u64,
 
     /// Motd displayed when the server's index page is visited.
     ///
@@ -64,7 +64,7 @@ pub struct DiskConfig {
 pub struct CacheConfig {
     /// The maximum length in bytes that a file can be
     /// before it skips cache (in seconds)
-    pub max_length: usize,
+    pub max_length: u64,
 
     /// The amount of time a file can last inside the cache (in seconds)
     #[serde_as(as = "DurationSeconds")]

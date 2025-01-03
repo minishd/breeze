@@ -67,9 +67,9 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn from_config(cfg: config::CacheConfig) -> Self {
+    pub fn with_config(cfg: config::CacheConfig) -> Self {
         Self {
-            map: DashMap::with_capacity(256),
+            map: DashMap::with_capacity(64),
             length: AtomicUsize::new(0),
 
             cfg,
@@ -212,7 +212,7 @@ impl Cache {
     /// Returns if an upload is able to be cached
     /// with the current caching rules
     #[inline(always)]
-    pub fn will_use(&self, length: usize) -> bool {
+    pub fn will_use(&self, length: u64) -> bool {
         length <= self.cfg.max_length
     }
 

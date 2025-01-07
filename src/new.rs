@@ -1,4 +1,9 @@
-use std::{ffi::OsStr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use axum::{
     body::Body,
@@ -32,7 +37,6 @@ pub struct NewRequest {
 
 /// The request handler for the /new path.
 /// This handles all new uploads.
-#[axum::debug_handler]
 pub async fn new(
     State(engine): State<Arc<crate::engine::Engine>>,
     Query(req): Query<NewRequest>,
@@ -49,11 +53,37 @@ pub async fn new(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let extension = PathBuf::from(req.name)
-        .extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_string();
+    // -- try to figure out a file extension..
+
+    fn extension(pb: &Path) -> Option<String> {
+        pb.extension().and_then(OsStr::to_str).map(str::to_string)
+    }
+
+    let pb = PathBuf::from(req.name);
+    let mut ext = extension(&pb);
+
+    // common extensions that usually have a second extension before themselves
+    const ADDITIVE: &[&str] = &["gz", "xz", "bz2", "lz4", "zst"];
+
+    // if the extension is one of those, try to find that second extension
+    if ext
+        .as_ref()
+        .is_some_and(|ext| ADDITIVE.contains(&ext.as_str()))
+    {
+        // try to parse out another extension
+        let stem = pb.file_stem().unwrap(); // SAFETY: if extension is Some(), this will also be
+
+        if let Some(second_ext) = extension(&PathBuf::from(stem)) {
+            // there is another extension,
+            // try to make sure it's one we want
+            // 4 is enough for most common file extensions
+            // and not many false positives, hopefully
+            if second_ext.len() <= 4 {
+                // seems ok so combine them
+                ext = ext.as_ref().map(|first_ext| second_ext + "." + first_ext);
+            }
+        }
+    }
 
     // turn body into stream
     let stream = Body::into_data_stream(body);
@@ -64,13 +94,7 @@ pub async fn new(
     // they don't expect the connection to close before they're done uploading, i think
     // so it will just present the user with a "connection closed" error
     match engine
-        .process(
-            &extension,
-            content_length,
-            stream,
-            req.last_for,
-            req.keep_exif,
-        )
+        .process(ext, content_length, stream, req.last_for, req.keep_exif)
         .await
     {
         Ok(outcome) => match outcome {

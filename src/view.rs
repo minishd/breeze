@@ -86,7 +86,6 @@ impl IntoResponse for UploadResponse {
 
 /// GET request handler for /p/* path.
 /// All file views are handled here.
-#[axum::debug_handler]
 pub async fn view(
     State(engine): State<Arc<crate::engine::Engine>>,
     Path(original_path): Path<PathBuf>,

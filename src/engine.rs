@@ -240,13 +240,13 @@ impl Engine {
     /// Generate a new saved name for an upload.
     ///
     /// If it picks a name that already exists, it will try again.
-    pub async fn gen_saved_name(&self, ext: &str) -> String {
+    pub async fn gen_saved_name(&self, ext: Option<String>) -> String {
         loop {
             // generate a 6-character alphanumeric string
             let mut saved_name: String = Alphanumeric.sample_string(&mut rand::thread_rng(), 6);
 
             // if we have an extension, add it now
-            if !ext.is_empty() {
+            if let Some(ref ext) = ext {
                 saved_name.push('.');
                 saved_name.push_str(ext);
             }
@@ -389,7 +389,7 @@ impl Engine {
 
     pub async fn process(
         &self,
-        ext: &str,
+        ext: Option<String>,
         provided_len: u64,
         stream: BodyDataStream,
         lifetime: Option<Duration>,

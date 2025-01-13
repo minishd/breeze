@@ -3,6 +3,9 @@ name = "breeze"
 version = "0.2.8"
 edition = "2021"
 
+[profile.dev.package]
+tikv-jemalloc-sys = { opt-level = 3 }
+
 [dependencies]
 axum-extra = { version = "0.10.0", default-features = false, features = [
     "tracing",
@@ -29,3 +32,6 @@ dashmap = { version = "6.1.0", features = ["rayon", "inline"] }
 rayon = "1.8"
 atomic-time = "0.1.4"
 img-parts = "0.3"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"

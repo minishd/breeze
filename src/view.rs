@@ -10,6 +10,7 @@ use axum_extra::TypedHeader;
 use headers::Range;
 use http::{HeaderValue, StatusCode};
 use tokio_util::io::ReaderStream;
+use tracing::error;
 
 use crate::engine::{GetOutcome, UploadData, UploadResponse};
 
@@ -91,19 +92,23 @@ pub async fn view(
     Path(original_path): Path<PathBuf>,
     range: Option<TypedHeader<Range>>,
 ) -> Result<UploadResponse, ViewError> {
-    let saved_name = if let Some(Some(n)) = original_path.file_name().map(OsStr::to_str) {
-        n
-    } else {
-        return Err(ViewError::NotFound);
+    // try to extract the file name (if it's the only component)
+    // this makes paths like `asdf%2fabcdef.png` invalid
+    let saved_name = match original_path.file_name().map(OsStr::to_str) {
+        Some(Some(n)) if original_path.components().count() == 1 => n,
+        _ => return Err(ViewError::NotFound),
     };
 
-    let range = range.map(|th| th.0);
+    let range = range.map(|TypedHeader(range)| range);
 
     // get result from the engine
     match engine.get(saved_name, range).await {
         Ok(GetOutcome::Success(res)) => Ok(res),
         Ok(GetOutcome::NotFound) => Err(ViewError::NotFound),
         Ok(GetOutcome::RangeNotSatisfiable) => Err(ViewError::RangeNotSatisfiable),
-        Err(_) => Err(ViewError::InternalServerError),
+        Err(err) => {
+            error!("failed to get upload!! {err:#}");
+            Err(ViewError::InternalServerError)
+        }
     }
 }

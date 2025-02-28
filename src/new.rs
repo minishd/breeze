@@ -14,6 +14,7 @@ use headers::ContentLength;
 use http::StatusCode;
 use serde::Deserialize;
 use serde_with::{serde_as, DurationSeconds};
+use tracing::error;
 
 use crate::engine::ProcessOutcome;
 
@@ -90,7 +91,7 @@ pub async fn new(
 
     // pass it off to the engine to be processed
     // --
-    // also, error responses here don't get represented properly in ShareX most of the time
+    // also, error responses here don't get presented properly in ShareX most of the time
     // they don't expect the connection to close before they're done uploading, i think
     // so it will just present the user with a "connection closed" error
     match engine
@@ -111,6 +112,9 @@ pub async fn new(
         },
 
         // 500 Internal Server Error
-        Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+        Err(err) => {
+            error!("failed to process upload!! {err:#}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }

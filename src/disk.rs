@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
 use tokio::{
@@ -32,8 +32,11 @@ impl Disk {
 
     /// Formats the path on disk for a `saved_name`.
     fn path_for(&self, saved_name: &str) -> PathBuf {
-        let mut p = self.cfg.save_path.clone();
-        p.push(saved_name);
+        // try to prevent path traversal by ignoring everything except the file name
+        let name = Path::new(saved_name).file_name().unwrap_or_default();
+
+        let mut p: PathBuf = self.cfg.save_path.clone();
+        p.push(name);
 
         p
     }
@@ -65,7 +68,7 @@ impl Disk {
     }
 
     /// Create a background I/O task
-    pub async fn start_save(&self, saved_name: &str) -> mpsc::UnboundedSender<Bytes> {
+    pub fn start_save(&self, saved_name: &str) -> mpsc::UnboundedSender<Bytes> {
         // start a task that handles saving files to disk (we can save to cache/disk in parallel that way)
         let (tx, mut rx): (mpsc::UnboundedSender<Bytes>, mpsc::UnboundedReceiver<Bytes>) =
             mpsc::unbounded_channel();

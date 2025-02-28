@@ -7,10 +7,11 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context as _;
 use axum::body::BodyDataStream;
 use bytes::{BufMut, Bytes, BytesMut};
 use img_parts::{DynImage, ImageEXIF};
-use rand::distributions::{Alphanumeric, DistString};
+use rand::distr::{Alphanumeric, SampleString};
 use tokio::{
     fs::File,
     io::{AsyncReadExt, AsyncSeekExt},
@@ -146,9 +147,7 @@ impl Engine {
             u
         } else {
             // now, check if we have it on disk
-            let mut f = if let Some(f) = self.disk.open(saved_name).await? {
-                f
-            } else {
+            let Some(mut f) = self.disk.open(saved_name).await? else {
                 // file didn't exist
                 return Ok(GetOutcome::NotFound);
             };
@@ -180,9 +179,7 @@ impl Engine {
 
                 data
             } else {
-                let (start, end) = if let Some(range) = resolve_range(range, full_len) {
-                    range
-                } else {
+                let Some((start, end)) = resolve_range(range, full_len) else {
                     return Ok(GetOutcome::RangeNotSatisfiable);
                 };
 
@@ -201,9 +198,7 @@ impl Engine {
         };
 
         let full_len = data.len() as u64;
-        let (start, end) = if let Some(range) = resolve_range(range, full_len) {
-            range
-        } else {
+        let Some((start, end)) = resolve_range(range, full_len) else {
             return Ok(GetOutcome::RangeNotSatisfiable);
         };
 
@@ -243,7 +238,7 @@ impl Engine {
     pub async fn gen_saved_name(&self, ext: Option<String>) -> String {
         loop {
             // generate a 6-character alphanumeric string
-            let mut saved_name: String = Alphanumeric.sample_string(&mut rand::thread_rng(), 6);
+            let mut saved_name: String = Alphanumeric.sample_string(&mut rand::rng(), 6);
 
             // if we have an extension, add it now
             if let Some(ref ext) = ext {
@@ -267,7 +262,10 @@ impl Engine {
         info!("!! removing upload: {saved_name}");
 
         self.cache.remove(saved_name);
-        self.disk.remove(saved_name).await?;
+        self.disk
+            .remove(saved_name)
+            .await
+            .context("failed to remove file from disk")?;
 
         info!("!! successfully removed upload");
 
@@ -295,12 +293,12 @@ impl Engine {
 
         // don't begin a disk save if we're using temporary lifetimes
         let tx = if lifetime.is_none() {
-            Some(self.disk.start_save(saved_name).await)
+            Some(self.disk.start_save(saved_name))
         } else {
             None
         };
 
-        // whether or not we're gonna coalesce the data
+        // whether or not we are going to coalesce the data
         // in order to strip the exif data at the end,
         // instead of just sending it off to the i/o task
         let coalesce_and_strip = use_cache
@@ -323,7 +321,8 @@ impl Engine {
             if !coalesce_and_strip {
                 if let Some(ref tx) = tx {
                     debug!("sending chunk to i/o task");
-                    tx.send(chunk.clone())?;
+                    tx.send(chunk.clone())
+                        .context("failed to send chunk to i/o task!")?;
                 }
             }
 
@@ -365,7 +364,8 @@ impl Engine {
             // send what we did over to the i/o task, all in one chunk
             if let Some(ref tx) = tx {
                 debug!("sending filled buffer to i/o task");
-                tx.send(data.clone())?;
+                tx.send(data.clone())
+                    .context("failed to send coalesced buffer to i/o task!")?;
             }
 
             data

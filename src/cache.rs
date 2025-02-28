@@ -6,7 +6,6 @@ use std::{
 use atomic_time::AtomicSystemTime;
 use bytes::Bytes;
 use dashmap::{mapref::one::Ref, DashMap};
-use rayon::prelude::*;
 use tokio::time;
 
 use crate::config;
@@ -81,7 +80,7 @@ impl Cache {
         let mut sorted: Vec<_> = self.map.iter().collect();
 
         // Sort by least recently used
-        sorted.par_sort_unstable_by(|e1, e2| e1.last_used().cmp(&e2.last_used()));
+        sorted.sort_unstable_by_key(|e| e.last_used());
 
         // Total bytes we would be removing
         let mut total = 0;
@@ -142,12 +141,12 @@ impl Cache {
             // How far we went above the limit
             let needed = new_total - self.cfg.mem_capacity;
 
-            self.next_out(needed).par_iter().for_each(|k| {
+            self.next_out(needed).iter().for_each(|k| {
                 // Remove the element, and ignore the result
                 // The only reason it should be failing is if it couldn't find it,
                 // in which case it was already removed
                 self.remove(k);
-            })
+            });
         }
 
         // Atomically add to total cached data length
@@ -170,7 +169,7 @@ impl Cache {
     ///
     /// It exists so we can run the expiry check before
     /// actually working with any entries, so no weird bugs happen
-    fn _get(&self, key: &str) -> Option<Ref<String, Entry>> {
+    fn get_(&self, key: &str) -> Option<Ref<String, Entry>> {
         let e = self.map.get(key)?;
 
         // if the entry is expired get rid of it now
@@ -190,7 +189,7 @@ impl Cache {
 
     /// Get an item from the cache, if it exists.
     pub fn get(&self, key: &str) -> Option<Bytes> {
-        let e = self._get(key)?;
+        let e = self.get_(key)?;
 
         if e.update_used {
             e.last_used.store(SystemTime::now(), Ordering::Relaxed);
@@ -206,7 +205,7 @@ impl Cache {
     /// We don't use [`DashMap::contains_key`] here because it would just do
     /// the exact same thing I do here, but without running the expiry check logic
     pub fn has(&self, key: &str) -> bool {
-        self._get(key).is_some()
+        self.get_(key).is_some()
     }
 
     /// Returns if an upload is able to be cached
@@ -235,7 +234,7 @@ impl Cache {
             // If we fail to compare the times, it gets added to the list anyways
             let expired: Vec<_> = self
                 .map
-                .par_iter()
+                .iter()
                 .filter_map(|e| {
                     let elapsed = now.duration_since(e.last_used()).unwrap_or(Duration::MAX);
                     let is_expired = elapsed >= e.lifetime;
@@ -252,7 +251,7 @@ impl Cache {
             if !expired.is_empty() {
                 // Use a retain call, should be less locks that way
                 // (instead of many remove calls)
-                self.map.retain(|k, _| !expired.contains(k))
+                self.map.retain(|k, _| !expired.contains(k));
             }
         }
     }

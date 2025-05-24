@@ -27,6 +27,12 @@ pub struct EngineConfig {
     #[serde(default)]
     pub upload_key: String,
 
+    /// Secret key to use when generating or verifying deletion tokens.
+    /// Leave blank to disable.
+    ///
+    /// If this secret is leaked, anyone can delete any file. Be careful!!!
+    pub deletion_secret: Option<String>,
+
     /// Configuration for disk system
     pub disk: DiskConfig,
 

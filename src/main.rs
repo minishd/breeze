@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use argh::FromArgs;
+use color_eyre::eyre::{self, bail, Context};
 use engine::Engine;
 
 use axum::{
@@ -12,6 +13,7 @@ use tracing::{info, warn};
 
 mod cache;
 mod config;
+mod delete;
 mod disk;
 mod engine;
 mod index;
@@ -34,19 +36,22 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> eyre::Result<()> {
+    // Install color-eyre
+    color_eyre::install()?;
+
     // Read & parse args
     let args: Args = argh::from_env();
 
     // Read & parse config
     let cfg: config::Config = {
-        let config_str = fs::read_to_string(args.config).await.expect(
+        let config_str = fs::read_to_string(args.config).await.wrap_err(
             "failed to read config file! make sure it exists and you have read permissions",
-        );
+        )?;
 
-        toml::from_str(&config_str).unwrap_or_else(|e| {
-            panic!("invalid config! ensure proper fields and structure. reference config is in readme.\n{e}");
-        })
+        toml::from_str(&config_str).wrap_err(
+            "invalid config! ensure proper fields and structure. reference config is in readme",
+        )?
     };
 
     // Set up tracing
@@ -58,7 +63,7 @@ async fn main() {
     {
         let save_path = cfg.engine.disk.save_path.clone();
         if !save_path.exists() || !save_path.is_dir() {
-            panic!("the save path does not exist or is not a directory! this is invalid");
+            bail!("the save path does not exist or is not a directory! this is invalid");
         }
     }
     if cfg.engine.upload_key.is_empty() {
@@ -72,6 +77,7 @@ async fn main() {
     let app = Router::new()
         .route("/new", post(new::new))
         .route("/p/{saved_name}", get(view::view))
+        .route("/del", get(delete::delete))
         .route("/", get(index::index))
         .route("/robots.txt", get(index::robots_txt))
         .with_state(Arc::new(engine));
@@ -80,11 +86,13 @@ async fn main() {
     info!("starting server.");
     let listener = TcpListener::bind(&cfg.http.listen_on)
         .await
-        .expect("failed to bind to given `http.listen_on` address! make sure it's valid, and the port isn't already bound");
+        .wrap_err("failed to bind to given `http.listen_on` address! make sure it's valid, and the port isn't already bound")?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .expect("failed to start server");
+        .wrap_err("failed to start server")?;
+
+    Ok(())
 }
 
 async fn shutdown_signal() {

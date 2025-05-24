@@ -1,15 +1,18 @@
 use std::{
+    io::SeekFrom,
     ops::Bound,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-use anyhow::Context as _;
 use axum::body::BodyDataStream;
+use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use bytes::{BufMut, Bytes, BytesMut};
+use color_eyre::eyre::{self, WrapErr};
+use hmac::Mac;
 use img_parts::{DynImage, ImageEXIF};
 use rand::distr::{Alphanumeric, SampleString};
 use tokio::{
@@ -18,6 +21,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info};
+use twox_hash::XxHash3_128;
 
 use crate::{cache, config, disk};
 
@@ -29,6 +33,7 @@ pub enum UploadData {
     Disk(tokio::io::Take<File>),
 }
 
+/// Upload data and metadata needed to build a view response
 pub struct UploadResponse {
     pub full_len: u64,
     pub range: (u64, u64),
@@ -39,8 +44,11 @@ pub struct UploadResponse {
 /// Some are rejections.
 pub enum ProcessOutcome {
     /// The upload was successful.
-    /// We give the user their file's URL
-    Success(String),
+    /// We give the user their file's URL (and deletion URL if one was created)
+    Success {
+        url: String,
+        deletion_url: Option<String>,
+    },
 
     /// Occurs when an upload exceeds the chosen maximum file size.
     UploadTooLarge,
@@ -64,6 +72,9 @@ pub enum GetOutcome {
     RangeNotSatisfiable,
 }
 
+/// Type alias to make using HMAC SHA256 easier
+type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+
 /// breeze engine
 pub struct Engine {
     /// Cached count of uploaded files
@@ -72,6 +83,9 @@ pub struct Engine {
     /// Engine configuration
     pub cfg: config::EngineConfig,
 
+    /// HMAC state initialised with the deletion secret (if present)
+    pub deletion_hmac: Option<HmacSha256>,
+
     /// The in-memory cache that cached uploads are stored in
     cache: Arc<cache::Cache>,
 
@@ -79,6 +93,7 @@ pub struct Engine {
     disk: disk::Disk,
 }
 
+/// Try to parse a `Range` header into an easier format to work with
 fn resolve_range(range: Option<headers::Range>, full_len: u64) -> Option<(u64, u64)> {
     let last_byte = full_len - 1;
 
@@ -109,9 +124,40 @@ fn resolve_range(range: Option<headers::Range>, full_len: u64) -> Option<(u64, u
     Some((start, end))
 }
 
+/// Calculate HMAC of field values.
+pub fn update_hmac(hmac: &mut HmacSha256, saved_name: &str, hash: u128) {
+    // mix deletion req fields into one buf
+    let mut field_bytes = BytesMut::new();
+    field_bytes.put(saved_name.as_bytes());
+    field_bytes.put_u128(hash);
+
+    // take the hmac
+    hmac.update(&field_bytes);
+}
+
+/// How many bytes of a file should be used for hash calculation.
+const SAMPLE_WANTED_BYTES: usize = 32768;
+
+/// Format some info about an upload and hash it
+///
+/// This should not change between versions!!
+/// That would break deletion urls
+fn calculate_hash(len: u64, data_sample: Bytes) -> u128 {
+    let mut buf = BytesMut::new();
+    buf.put_u64(len);
+    buf.put(data_sample);
+
+    XxHash3_128::oneshot(&buf)
+}
+
 impl Engine {
     /// Creates a new instance of the engine
     pub fn with_config(cfg: config::EngineConfig) -> Self {
+        let deletion_hmac = cfg
+            .deletion_secret
+            .as_ref()
+            .map(|s| HmacSha256::new_from_slice(s.as_bytes()).unwrap());
+
         let cache = cache::Cache::with_config(cfg.cache.clone());
         let disk = disk::Disk::with_config(cfg.disk.clone());
 
@@ -123,6 +169,7 @@ impl Engine {
         Self {
             // initialise our cached upload count. this doesn't include temp uploads!
             upl_count: AtomicUsize::new(disk.count()),
+            deletion_hmac,
 
             cfg,
 
@@ -142,7 +189,7 @@ impl Engine {
         &self,
         saved_name: &str,
         range: Option<headers::Range>,
-    ) -> anyhow::Result<GetOutcome> {
+    ) -> eyre::Result<GetOutcome> {
         let data = if let Some(u) = self.cache.get(saved_name) {
             u
         } else {
@@ -185,7 +232,7 @@ impl Engine {
 
                 let range_len = (end - start) + 1;
 
-                f.seek(std::io::SeekFrom::Start(start)).await?;
+                f.seek(SeekFrom::Start(start)).await?;
                 let f = f.take(range_len);
 
                 let res = UploadResponse {
@@ -232,6 +279,45 @@ impl Engine {
         false
     }
 
+    /// Try to read a file and calculate a hash for it.
+    pub async fn get_hash(&self, saved_name: &str) -> eyre::Result<Option<u128>> {
+        // readout sample data and full len
+        let (data_sample, len) = if let Some(full_data) = self.cache.get(saved_name) {
+            // we found it in cache! take as many bytes as we can
+            let taking = full_data.len().min(SAMPLE_WANTED_BYTES);
+            let data = full_data.slice(0..taking);
+
+            let len = full_data.len() as u64;
+
+            tracing::info!("data len is {}", data.len());
+
+            (data, len)
+        } else {
+            // not in cache, so try disk
+            let Some(mut f) = self.disk.open(saved_name).await? else {
+                // not found there either so we just dont have it
+                return Ok(None);
+            };
+
+            // find len..
+            let len = f.seek(SeekFrom::End(0)).await?;
+            f.rewind().await?;
+
+            // only take wanted # of bytes for read
+            let mut f = f.take(SAMPLE_WANTED_BYTES as u64);
+
+            // try to read
+            let mut data = Vec::with_capacity(SAMPLE_WANTED_BYTES);
+            f.read_to_end(&mut data).await?;
+            let data = Bytes::from(data);
+
+            (data, len)
+        };
+
+        // calculate hash
+        Ok(Some(calculate_hash(len, data_sample)))
+    }
+
     /// Generate a new saved name for an upload.
     ///
     /// If it picks a name that already exists, it will try again.
@@ -258,14 +344,14 @@ impl Engine {
     /// Wipe out an upload from all storage.
     ///
     /// This is for deleting failed uploads only!!
-    pub async fn remove(&self, saved_name: &str) -> anyhow::Result<()> {
-        info!("!! removing upload: {saved_name}");
+    pub async fn remove(&self, saved_name: &str) -> eyre::Result<()> {
+        info!(saved_name, "!! removing upload");
 
         self.cache.remove(saved_name);
         self.disk
             .remove(saved_name)
             .await
-            .context("failed to remove file from disk")?;
+            .wrap_err("failed to remove file from disk")?;
 
         info!("!! successfully removed upload");
 
@@ -283,7 +369,7 @@ impl Engine {
         mut stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
-    ) -> anyhow::Result<()> {
+    ) -> eyre::Result<(Bytes, u64)> {
         // if we're using cache, make some space to store the upload in
         let mut data = if use_cache {
             BytesMut::with_capacity(provided_len.try_into()?)
@@ -311,6 +397,11 @@ impl Engine {
             && !keep_exif
             && provided_len <= self.cfg.max_strip_len;
 
+        // buffer of sampled data for the deletion hash
+        let mut hash_sample = BytesMut::with_capacity(SAMPLE_WANTED_BYTES);
+        // actual number of bytes processed
+        let mut observed_len = 0;
+
         // read and save upload
         while let Some(chunk) = stream.next().await {
             // if we error on a chunk, fail out
@@ -322,15 +413,27 @@ impl Engine {
                 if let Some(ref tx) = tx {
                     debug!("sending chunk to i/o task");
                     tx.send(chunk.clone())
-                        .context("failed to send chunk to i/o task!")?;
+                        .wrap_err("failed to send chunk to i/o task!")?;
                 }
             }
+
+            // add to sample if we need to
+            let wanted = SAMPLE_WANTED_BYTES - hash_sample.len();
+            if wanted != 0 {
+                // take as many bytes as we can ...
+                let taking = chunk.len().min(wanted);
+                hash_sample.extend_from_slice(&chunk[0..taking]);
+            }
+            // record new len
+            observed_len += chunk.len() as u64;
 
             if use_cache {
                 debug!("receiving data into buffer");
 
                 if data.len() + chunk.len() > data.capacity() {
-                    info!("the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload.");
+                    info!(
+                        "the amount of data sent exceeds the content-length provided by the client! caching will be cancelled for this upload."
+                    );
 
                     // if we receive too much data, drop the buffer and stop using cache (it is still okay to use disk, probably)
                     data = BytesMut::new();
@@ -365,7 +468,7 @@ impl Engine {
             if let Some(ref tx) = tx {
                 debug!("sending filled buffer to i/o task");
                 tx.send(data.clone())
-                    .context("failed to send coalesced buffer to i/o task!")?;
+                    .wrap_err("failed to send coalesced buffer to i/o task!")?;
             }
 
             data
@@ -384,7 +487,7 @@ impl Engine {
             };
         }
 
-        Ok(())
+        Ok((hash_sample.freeze(), observed_len))
     }
 
     pub async fn process(
@@ -394,7 +497,7 @@ impl Engine {
         stream: BodyDataStream,
         lifetime: Option<Duration>,
         keep_exif: bool,
-    ) -> anyhow::Result<ProcessOutcome> {
+    ) -> eyre::Result<ProcessOutcome> {
         // if the upload size is greater than our max file size, deny it now
         if self.cfg.max_upload_len.is_some_and(|l| provided_len > l) {
             return Ok(ProcessOutcome::UploadTooLarge);
@@ -428,22 +531,47 @@ impl Engine {
             )
             .await;
 
-        // If anything fails, delete the upload and return the error
-        if save_result.is_err() {
-            error!("failed processing upload!");
+        // handle result
+        let (hash_sample, len) = match save_result {
+            // Okay so just extract metadata
+            Ok(m) => m,
+            // If anything fails, delete the upload and return the error
+            Err(err) => {
+                error!("failed processing upload!");
 
-            self.remove(&saved_name).await?;
-            save_result?;
-        }
+                self.remove(&saved_name).await?;
+                return Err(err);
+            }
+        };
+
+        // if deletion urls are enabled, create one
+        let deletion_url = self.deletion_hmac.clone().map(|mut hmac| {
+            // calculate hash of file metadata
+            let hash = calculate_hash(len, hash_sample);
+            let mut hash_bytes = BytesMut::new();
+            hash_bytes.put_u128(hash);
+            let hash_b64 = BASE64_URL_SAFE_NO_PAD.encode(&hash_bytes);
+
+            // take hmac
+            update_hmac(&mut hmac, &saved_name, hash);
+            let out = hmac.finalize().into_bytes();
+            let out_b64 = BASE64_URL_SAFE_NO_PAD.encode(out);
+
+            // format deletion url
+            format!(
+                "{}/del?name={saved_name}&hash={hash_b64}&hmac={out_b64}",
+                self.cfg.base_url
+            )
+        });
 
         // format and send back the url
-        let url = format!("{}/p/{}", self.cfg.base_url, saved_name);
+        let url = format!("{}/p/{saved_name}", self.cfg.base_url);
 
         // if all goes well, increment the cached upload counter
         self.upl_count.fetch_add(1, Ordering::Relaxed);
 
         info!("finished processing upload!");
 
-        Ok(ProcessOutcome::Success(url))
+        Ok(ProcessOutcome::Success { url, deletion_url })
     }
 }

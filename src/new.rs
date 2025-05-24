@@ -8,12 +8,13 @@ use std::{
 use axum::{
     body::Body,
     extract::{Query, State},
+    response::{IntoResponse, Response},
 };
 use axum_extra::TypedHeader;
 use headers::ContentLength;
-use http::StatusCode;
+use http::{HeaderValue, StatusCode};
 use serde::Deserialize;
-use serde_with::{serde_as, DurationSeconds};
+use serde_with::{DurationSeconds, serde_as};
 use tracing::error;
 
 use crate::engine::ProcessOutcome;
@@ -43,7 +44,7 @@ pub async fn new(
     Query(req): Query<NewRequest>,
     TypedHeader(ContentLength(content_length)): TypedHeader<ContentLength>,
     body: Body,
-) -> Result<String, StatusCode> {
+) -> Result<Response, StatusCode> {
     // check upload key, if i need to
     if !engine.cfg.upload_key.is_empty() && req.key.unwrap_or_default() != engine.cfg.upload_key {
         return Err(StatusCode::FORBIDDEN);
@@ -100,7 +101,20 @@ pub async fn new(
     {
         Ok(outcome) => match outcome {
             // 200 OK
-            ProcessOutcome::Success(url) => Ok(url),
+            ProcessOutcome::Success { url, deletion_url } => {
+                let mut res = url.into_response();
+
+                // insert deletion url header if needed
+                if let Some(deletion_url) = deletion_url {
+                    let deletion_url = HeaderValue::from_str(&deletion_url)
+                        .expect("deletion url contains invalid chars");
+
+                    let headers = res.headers_mut();
+                    headers.insert("Breeze-Deletion-Url", deletion_url);
+                }
+
+                Ok(res)
+            }
 
             // 413 Payload Too Large
             ProcessOutcome::UploadTooLarge | ProcessOutcome::TemporaryUploadTooLarge => {

@@ -1,20 +1,31 @@
 [package]
 name = "breeze"
-version = "0.2.9"
-edition = "2021"
+version = "0.3.0"
+edition = "2024"
 
 [profile.dev.package]
 tikv-jemalloc-sys = { opt-level = 3 }
 
 [dependencies]
+argh = "0.1.12"
+atomic-time = "0.1.4"
+axum = { version = "0.8.1", features = ["macros", "http2"] }
 axum-extra = { version = "0.10.0", default-features = false, features = [
     "tracing",
     "typed-header",
 ] }
-axum = { version = "0.8.1", features = ["macros", "http2"] }
-tower = "0.5"
-http = "1.2"
+base64 = "0.21"
+bytes = "1"
+color-eyre = "0.6"
+dashmap = { version = "6.1.0", features = ["inline"] }
 headers = "0.4"
+hmac = "0.12.1"
+http = "1.2"
+img-parts = "0.3"
+rand = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_with = "3.12"
+sha2 = "0.10.9"
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",
@@ -22,21 +33,13 @@ tokio = { version = "1", features = [
     "fs",
     "signal",
 ] }
-tokio-util = { version = "0.7", features = ["io"] }
 tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+toml = "0.8.2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-bytes = "1"
-rand = "0.9"
+twox-hash = "2"
 walkdir = "2"
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_with = "3.12"
-toml = "0.8.2"
-argh = "0.1.12"
-dashmap = { version = "6.1.0", features = ["inline"] }
-atomic-time = "0.1.4"
-img-parts = "0.3"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"

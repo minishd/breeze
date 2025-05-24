@@ -77,6 +77,8 @@
         with lib; let
           cfg = config.services.breeze;
           settingsFormat = pkgs.formats.toml {};
+          defaultUser = "breeze";
+          defaultGroup = "breeze";
         in {
           options = {
             services.breeze = {
@@ -90,13 +92,13 @@
 
               user = mkOption {
                 type = types.str;
-                default = "breeze";
+                default = defaultUser;
                 description = "User that `breeze` will run under";
               };
 
               group = mkOption {
                 type = types.str;
-                default = "breeze";
+                default = defaultGroup;
                 description = "Group that `breeze` will run under";
               };
 
@@ -111,7 +113,7 @@
                 default = {};
                 description = ''
                   The *.toml configuration to run `breeze` with.
-                  There is no formal documentation, but there is an example in the [readme](https://git.min.rip/min/breeze/src/branch/main/README.md).
+                  The options aren't formally documented, but the [readme](https://git.min.rip/min/breeze/src/branch/main/README.md) provides examples.
                 '';
               };
 
@@ -132,16 +134,29 @@
                   This is useful for loading it from a secret management system.
                 '';
               };
+
+              deletionSecretFile = mkOption {
+                type = types.nullOr types.path;
+                default = null;
+                description = ''
+                  File to load the `engine.deletion_secret` from, if desired.
+                  This is useful for loading it from a secret management system.
+                '';
+              };
             };
           };
 
           config = mkIf cfg.enable {
-            users.users.${cfg.user} = {
-              isSystemUser = true;
-              inherit (cfg) group;
+            users.users = mkIf (cfg.user == defaultUser) {
+              ${cfg.user} = {
+                isSystemUser = true;
+                inherit (cfg) group;
+              };
             };
 
-            users.groups.${cfg.group} = {};
+            users.groups = mkIf (cfg.group == defaultGroup) {
+              ${cfg.group} = {};
+            };
 
             systemd.tmpfiles.rules = [
               "d '${cfg.configDir}' 0750 ${cfg.user} ${cfg.group} - -"
@@ -149,6 +164,7 @@
 
             services.breeze.settings = mkMerge [
               (mkIf (cfg.uploadKeyFile != null) {engine.upload_key = "@UPLOAD_KEY@";})
+              (mkIf (cfg.deletionSecretFile != null) {engine.deletion_secret = "@DELETION_SECRET@";})
             ];
 
             systemd.services.breeze = let
@@ -164,6 +180,9 @@
                 ''
                 + lib.optionalString (cfg.uploadKeyFile != null) ''
                   ${pkgs.replace-secret}/bin/replace-secret '@UPLOAD_KEY@' "${cfg.uploadKeyFile}" ${cfgFile}
+                ''
+                + lib.optionalString (cfg.deletionSecretFile != null) ''
+                  ${pkgs.replace-secret}/bin/replace-secret '@DELETION_SECRET@' "${cfg.deletionSecretFile}" ${cfgFile}
                 '';
 
               serviceConfig = rec {

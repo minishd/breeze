@@ -103,6 +103,12 @@ base_url = "http://127.0.0.1:8000"
 # If it is not set, no key will be required.
 upload_key = "hiiiiiiii"
 
+# OPTIONAL - If set, the secret key used to verify ShareX deletion URLs.
+# If it is not set, deletion URLs will not be created or made usable.
+# WARNING: Do not share this!! If somebody else obtains it, they can
+# generate deletion URLs for any upload!!
+deletion_secret = "asdfhjkasdhjfashjlfhjkaskdfjkhdjkh"
+
 # OPTIONAL - specifies what to show when the site is visited on http
 # It is sent with text/plain content type.
 # There are two variables you can use:
@@ -167,6 +173,8 @@ Uploads should be sent to `/new?name={original filename}` as a POST request. If 
 
 Also you can specify `&lastfor={time in seconds}` to make your upload temporary, or `&keepexif=true` to tell the server not to clear EXIF data on image uploads. (if you don't know what EXIF data is, you can leave it as default. you'll know if you need it)
 
+The endpoint's response will just be the URL of the upload in plain text, and the deletion URL will be sent in the `Breeze-Deletion-Url` header (if it's enabled).
+
 Here's an example ShareX configuration for it (with a key):
 
 ```json
@@ -180,6 +188,7 @@ Here's an example ShareX configuration for it (with a key):
     "name": "{filename}",
     "key": "hiiiiiiii"
   },
-  "Body": "Binary"
+  "Body": "Binary",
+  "DeletionURL": "{header:Breeze-Deletion-Url}"
 }
 ```

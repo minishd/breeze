@@ -77,16 +77,20 @@ impl Disk {
 
         tokio::spawn(async move {
             // create file to save upload to
-            let mut file = File::create(p)
-                .await
-                .expect("could not open file! make sure your upload path is valid");
+            let file = File::create(p).await;
+
+            if let Err(err) = file {
+                tracing::error!(%err, "could not open file! make sure your upload path is valid");
+                return;
+            }
+            let mut file = file.unwrap();
 
             // receive chunks and save them to file
             while let Some(chunk) = rx.recv().await {
                 debug!("writing chunk to disk (length: {})", chunk.len());
-                file.write_all(&chunk)
-                    .await
-                    .expect("error while writing file to disk");
+                if let Err(err) = file.write_all(&chunk).await {
+                    tracing::error!(%err, "error while writing file to disk");
+                }
             }
         });
 

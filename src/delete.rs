@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use axum::extract::{Query, State};
 use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
@@ -81,6 +81,9 @@ pub async fn delete(
         tracing::error!(%err, "failed to delete upload");
         return (StatusCode::INTERNAL_SERVER_ERROR, "Delete failed");
     }
+
+    // decrement upload count
+    engine.upl_count.fetch_sub(1, Ordering::Relaxed);
 
     (StatusCode::OK, "Deleted successfully!")
 }

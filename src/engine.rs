@@ -343,7 +343,7 @@ impl Engine {
 
     /// Wipe out an upload from all storage.
     ///
-    /// This is for deleting failed uploads only!!
+    /// (Intended for deletion URLs and failed uploads)
     pub async fn remove(&self, saved_name: &str) -> eyre::Result<()> {
         info!(saved_name, "!! removing upload");
 

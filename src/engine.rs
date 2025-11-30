@@ -289,8 +289,6 @@ impl Engine {
 
             let len = full_data.len() as u64;
 
-            tracing::info!("data len is {}", data.len());
-
             (data, len)
         } else {
             // not in cache, so try disk
@@ -409,12 +407,10 @@ impl Engine {
 
             // if we have an i/o task, send it off
             // also cloning this is okay because it's a Bytes
-            if !coalesce_and_strip {
-                if let Some(ref tx) = tx {
-                    debug!("sending chunk to i/o task");
-                    tx.send(chunk.clone())
-                        .wrap_err("failed to send chunk to i/o task!")?;
-                }
+            if !coalesce_and_strip && let Some(ref tx) = tx {
+                debug!("sending chunk to i/o task");
+                tx.send(chunk.clone())
+                    .wrap_err("failed to send chunk to i/o task!")?;
             }
 
             // add to sample if we need to

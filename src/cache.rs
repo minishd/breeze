@@ -5,7 +5,7 @@ use std::{
 
 use atomic_time::AtomicSystemTime;
 use bytes::Bytes;
-use dashmap::{mapref::one::Ref, DashMap};
+use dashmap::{DashMap, mapref::one::Ref};
 use tokio::time;
 
 use crate::config;
@@ -169,7 +169,7 @@ impl Cache {
     ///
     /// It exists so we can run the expiry check before
     /// actually working with any entries, so no weird bugs happen
-    fn get_(&self, key: &str) -> Option<Ref<String, Entry>> {
+    fn get_(&self, key: &str) -> Option<Ref<'_, String, Entry>> {
         let e = self.map.get(key)?;
 
         // if the entry is expired get rid of it now

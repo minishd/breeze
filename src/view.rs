@@ -22,7 +22,7 @@ pub enum ViewError {
     /// Will send status code 500 with a plaintext "internal server error" message.
     InternalServerError,
 
-    /// Sends status code 206 with a plaintext "range not satisfiable" message.
+    /// Sends status code 416 with a plaintext "range not satisfiable" message.
     RangeNotSatisfiable,
 }
 

@@ -2,8 +2,10 @@ use std::sync::{Arc, atomic::Ordering};
 
 use axum::extract::State;
 
+use crate::engine::Engine;
+
 /// Show index status page with amount of uploaded files
-pub async fn index(State(engine): State<Arc<crate::engine::Engine>>) -> String {
+pub async fn index(State(engine): State<Arc<Engine>>) -> String {
     let count = engine.upl_count.load(Ordering::Relaxed);
 
     let motd = engine.cfg.motd.clone();

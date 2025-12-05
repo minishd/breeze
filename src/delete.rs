@@ -1,13 +1,13 @@
 use std::sync::{Arc, atomic::Ordering};
 
 use axum::extract::{Query, State};
-use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
+use base64::{Engine as _, prelude::BASE64_URL_SAFE_NO_PAD};
 use bytes::{Buf, BytesMut};
 use hmac::Mac;
 use http::StatusCode;
 use serde::Deserialize;
 
-use crate::engine::update_hmac;
+use crate::engine::{Engine, update_hmac};
 
 #[derive(Deserialize)]
 pub struct DeleteRequest {
@@ -17,7 +17,7 @@ pub struct DeleteRequest {
 }
 
 pub async fn delete(
-    State(engine): State<Arc<crate::engine::Engine>>,
+    State(engine): State<Arc<Engine>>,
     Query(req): Query<DeleteRequest>,
 ) -> (StatusCode, &'static str) {
     let Some(mut hmac) = engine.deletion_hmac.clone() else {

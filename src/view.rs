@@ -12,7 +12,7 @@ use http::{HeaderValue, StatusCode};
 use tokio_util::io::ReaderStream;
 use tracing::error;
 
-use crate::engine::{GetOutcome, UploadData, UploadResponse};
+use crate::engine::{Engine, GetOutcome, UploadData, UploadResponse};
 
 /// Responses for a failed view operation
 pub enum ViewError {
@@ -88,7 +88,7 @@ impl IntoResponse for UploadResponse {
 /// GET request handler for /p/* path.
 /// All file views are handled here.
 pub async fn view(
-    State(engine): State<Arc<crate::engine::Engine>>,
+    State(engine): State<Arc<Engine>>,
     Path(original_path): Path<PathBuf>,
     range: Option<TypedHeader<Range>>,
 ) -> Result<UploadResponse, ViewError> {

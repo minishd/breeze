@@ -8,7 +8,7 @@ use std::{
 use axum::{
     body::Body,
     extract::{Query, State},
-    response::{IntoResponse, Response},
+    response::{IntoResponse as _, Response},
 };
 use axum_extra::TypedHeader;
 use headers::ContentLength;
@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_with::{DurationSeconds, serde_as};
 use tracing::error;
 
-use crate::engine::ProcessOutcome;
+use crate::engine::{Engine, ProcessOutcome};
 
 fn default_keep_exif() -> bool {
     false
@@ -40,7 +40,7 @@ pub struct NewRequest {
 /// The request handler for the /new path.
 /// This handles all new uploads.
 pub async fn new(
-    State(engine): State<Arc<crate::engine::Engine>>,
+    State(engine): State<Arc<Engine>>,
     Query(req): Query<NewRequest>,
     TypedHeader(ContentLength(content_length)): TypedHeader<ContentLength>,
     body: Body,

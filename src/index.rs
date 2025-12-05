@@ -1,4 +1,4 @@
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::Ordering};
 
 use axum::extract::State;
 
@@ -12,6 +12,7 @@ pub async fn index(State(engine): State<Arc<crate::engine::Engine>>) -> String {
         .replace("%uplcount%", &count.to_string())
 }
 
+#[rustfmt::skip]
 pub async fn robots_txt() -> &'static str {
     /// robots.txt that tells web crawlers not to list uploads
     const ROBOTS_TXT: &str = concat!(

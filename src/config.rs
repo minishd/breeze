@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use serde::Deserialize;
-use serde_with::{serde_as, DisplayFromStr, DurationSeconds};
+use serde_with::{DisplayFromStr, DurationSeconds, serde_as};
 use tracing_subscriber::filter::LevelFilter;
 
 #[derive(Deserialize)]

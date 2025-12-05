@@ -1,12 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
 use argh::FromArgs;
-use color_eyre::eyre::{self, bail, Context};
+use color_eyre::eyre::{self, Context, bail};
 use engine::Engine;
 
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use tokio::{fs, net::TcpListener, signal};
 use tracing::{info, warn};

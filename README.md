@@ -146,8 +146,8 @@ max_length = 134_217_728
 # How long a cached upload will remain cached. (in seconds)
 upload_lifetime = 1800
 
-# How often the cache will be checked for expired uploads.
-# It is not a continuous scan, and only is triggered upon a cache operation.
+# How often the cache will be checked for expired uploads
+# in the background.
 scan_freq = 60
 
 # How much memory (in bytes) the cache is allowed to consume.

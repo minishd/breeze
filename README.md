@@ -125,13 +125,13 @@ max_temp_lifetime = 43200
 # OPTIONAL - the maximum length (in bytes) a file being uploaded may be.
 # A word of warning about this: the error shown to ShareX users who
 # hit the limit is *not* very clear. ("connection closed" or similar)
-max_upload_len = 2_147_483_648
+max_upload_len = 2_147_483_647
 
 # The maximum length (in bytes) an image file may be before the server
 # will skip removing its EXIF data.
 # The performance impact of breeze's EXIF data removal is not
 # very high in everyday usage, so something like 16MiB is reasonable.
-max_strip_len = 16_777_216
+max_strip_len = 16_777_215
 
 [engine.disk]
 # The location that uploads will be saved to.
@@ -141,7 +141,7 @@ save_path = "/data"
 [engine.cache]
 # The file size (in bytes) that a file must be under
 # to get cached.
-max_length = 134_217_728
+max_length = 134_217_727
 
 # How long a cached upload will remain cached. (in seconds)
 upload_lifetime = 1800
@@ -151,7 +151,7 @@ upload_lifetime = 1800
 scan_freq = 60
 
 # How much memory (in bytes) the cache is allowed to consume.
-mem_capacity = 4_294_967_296
+mem_capacity = 4_294_967_295
 
 [http]
 # The address that the HTTP server will listen on. (ip:port)

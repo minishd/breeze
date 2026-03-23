@@ -6,7 +6,6 @@ use tokio::{
     io::{self, AsyncWriteExt},
     sync::mpsc,
 };
-use tracing::debug;
 use walkdir::WalkDir;
 
 use crate::config;
@@ -87,9 +86,10 @@ impl Disk {
 
             // receive chunks and save them to file
             while let Some(chunk) = rx.recv().await {
-                debug!("writing chunk to disk (length: {})", chunk.len());
+                tracing::debug!(length = chunk.len(), "writing chunk to disk");
                 if let Err(err) = file.write_all(&chunk).await {
                     tracing::error!(%err, "error while writing file to disk");
+                    break;
                 }
             }
         });

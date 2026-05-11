@@ -35,6 +35,17 @@ struct Args {
     config: PathBuf,
 }
 
+/// Instantiates router.
+fn router(engine: Engine) -> Router {
+    Router::new()
+        .route("/new", post(new::new))
+        .route("/p/{saved_name}", get(view::view))
+        .route("/del", get(delete::delete))
+        .route("/", get(index::index))
+        .route("/robots.txt", get(index::robots_txt))
+        .with_state(Arc::new(engine))
+}
+
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     // Install color-eyre
@@ -74,13 +85,7 @@ async fn main() -> eyre::Result<()> {
     let engine = Engine::with_config(cfg.engine);
 
     // Build main router
-    let app = Router::new()
-        .route("/new", post(new::new))
-        .route("/p/{saved_name}", get(view::view))
-        .route("/del", get(delete::delete))
-        .route("/", get(index::index))
-        .route("/robots.txt", get(index::robots_txt))
-        .with_state(Arc::new(engine));
+    let app = router(engine);
 
     // Start web server
     info!("starting server.");

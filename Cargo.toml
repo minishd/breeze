@@ -1,6 +1,6 @@
 [package]
 name = "breeze"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 
 [profile.dev.package]
@@ -9,22 +9,23 @@ tikv-jemalloc-sys = { opt-level = 3 }
 [dependencies]
 argh = "0.1.12"
 atomic-time = "0.1.4"
-axum = { version = "0.8.1", features = ["macros", "http2"] }
-axum-extra = { version = "0.10.0", default-features = false, features = [
+axum = { version = "0.8.9", features = ["macros", "http2"] }
+axum-extra = { version = "0.12.6", default-features = false, features = [
     "tracing",
     "typed-header",
 ] }
-base64 = "0.21"
+base64 = "0.22"
 bytes = "1"
 color-eyre = "0.6"
 dashmap = { version = "6.1.0", features = ["inline"] }
 headers = "0.4"
+heed = "0.22.1"
 hmac = "0.12.1"
 http = "1.2"
 img-parts = "0.3"
 rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
-serde_with = "3.12"
+serde_with = "3.19"
 sha2 = "0.10.9"
 tokio = { version = "1", features = [
     "rt-multi-thread",
@@ -32,6 +33,7 @@ tokio = { version = "1", features = [
     "net",
     "fs",
     "signal",
+    "test-util",
 ] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }

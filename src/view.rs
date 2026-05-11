@@ -45,7 +45,7 @@ impl IntoResponse for ViewError {
 impl IntoResponse for UploadResponse {
     fn into_response(self) -> Response {
         let (start, end) = self.range;
-        let range_len = (end - start) + 1;
+        let range_len = end - start;
 
         let mut res = match self.data {
             UploadData::Cache(data) => data.into_response(),

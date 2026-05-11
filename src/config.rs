@@ -20,7 +20,7 @@ fn default_motd() -> String {
 pub struct EngineConfig {
     /// The url that the instance of breeze is meant to be accessed from.
     ///
-    /// ex: https://picture.wtf would generate links like https://picture.wtf/p/abcdef.png
+    /// ex: `https://picture.wtf` would generate links like `https://picture.wtf/p/abcdef.png`
     pub base_url: String,
 
     /// Authentication key for new uploads, will be required if this is specified. (optional)
@@ -69,8 +69,8 @@ pub struct DiskConfig {
 #[derive(Deserialize, Clone)]
 pub struct CacheConfig {
     /// The maximum length in bytes that a file can be
-    /// before it skips cache (in seconds)
-    pub max_length: u64,
+    /// before it skips cache (in bytes)
+    pub max_length: usize,
 
     /// The amount of time a file can last inside the cache (in seconds)
     #[serde_as(as = "DurationSeconds")]

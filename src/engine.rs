@@ -1,6 +1,6 @@
 use std::{
     io::SeekFrom,
-    ops::Bound,
+    ops::{Bound, RangeBounds},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -95,32 +95,53 @@ pub struct Engine {
 
 /// Try to parse a `Range` header into an easier format to work with
 fn resolve_range(range: Option<headers::Range>, full_len: u64) -> Option<(u64, u64)> {
-    let last_byte = full_len - 1;
+    // Prepare default range
+    let default = Some((0, full_len));
 
-    let (start, end) =
-        if let Some((start, end)) = range.and_then(|r| r.satisfiable_ranges(full_len).next()) {
-            // satisfiable_ranges will never return Excluded so this is ok
-            let start = if let Bound::Included(start_incl) = start {
-                start_incl
-            } else {
-                0
-            };
-            let end = if let Bound::Included(end_incl) = end {
-                end_incl
-            } else {
-                last_byte
-            };
+    // Take range, otherwise return
+    let Some(range) = range else {
+        return default; // unspecified; use default
+    };
 
-            (start, end)
-        } else {
-            (0, last_byte)
-        };
+    // Get iterator of satisfiable ranges
+    let mut ranges = range.satisfiable_ranges(full_len);
 
-    // catch ranges we can't satisfy
-    if end > last_byte || start > end {
+    // Take first range
+    let Some(range) = ranges.next() else {
+        return default; // empty; use default
+    };
+
+    // If there are multiple ranges, we will
+    // not process the request
+    if ranges.next().is_some() {
         return None;
     }
 
+    // Convert into a..b range
+    let start = match range.start_bound() {
+        Bound::Included(&x) => x,
+        Bound::Excluded(&x) => x.checked_add(1)?,
+        Bound::Unbounded => 0,
+    };
+    let end = match range.end_bound() {
+        Bound::Included(&x) => x.checked_add(1)?,
+        Bound::Excluded(&x) => x,
+        Bound::Unbounded => full_len,
+    };
+
+    // We can't handle bounds
+    // out of order
+    if start > end {
+        return None;
+    }
+
+    // We can't return more bytes
+    // than we have
+    if end > full_len {
+        return None;
+    }
+
+    // Return
     Some((start, end))
 }
 
@@ -199,6 +220,7 @@ impl Engine {
                 return Ok(GetOutcome::NotFound);
             };
 
+            // read length from disk
             let full_len = self.disk.len(&f).await?;
 
             // if possible, recache and send a cache response
@@ -230,11 +252,11 @@ impl Engine {
                     return Ok(GetOutcome::RangeNotSatisfiable);
                 };
 
-                let range_len = (end - start) + 1;
-
+                // Set up file handle
                 f.seek(SeekFrom::Start(start)).await?;
-                let f = f.take(range_len);
+                let f = f.take(end - start);
 
+                // Return
                 let res = UploadResponse {
                     full_len,
                     range: (start, end),
@@ -244,15 +266,27 @@ impl Engine {
             }
         };
 
+        // Resolve a..b range
         let full_len = data.len() as u64;
         let Some((start, end)) = resolve_range(range, full_len) else {
             return Ok(GetOutcome::RangeNotSatisfiable);
         };
 
-        // cut down to range
-        let data = data.slice((start as usize)..=(end as usize));
+        // Cut down to range
+        let data = {
+            // Convert types.
+            // These should never be greater than usize::MAX
+            // if I recall, because max cache length is a usize.
+            let (start, end): (usize, usize) = (
+                start.try_into().expect("start bound"),
+                end.try_into().expect("end bound"),
+            );
 
-        // build response
+            // Slice bytes
+            data.slice(start..end)
+        };
+
+        // Build response
         let res = UploadResponse {
             full_len,
             range: (start, end),
@@ -286,9 +320,10 @@ impl Engine {
             // we found it in cache! take as many bytes as we can
             let taking = full_data.len().min(SAMPLE_WANTED_BYTES);
             let data = full_data.slice(0..taking);
-
+            // get len
             let len = full_data.len() as u64;
 
+            // return
             (data, len)
         } else {
             // not in cache, so try disk
@@ -332,10 +367,10 @@ impl Engine {
 
             if !self.has(&saved_name).await {
                 break saved_name;
-            } else {
-                // there was a name collision. loop and try again
-                info!("name collision! saved_name= {}", saved_name);
             }
+
+            // there was a name collision. loop and try again
+            info!("name collision! saved_name= {}", saved_name);
         }
     }
 
@@ -483,6 +518,7 @@ impl Engine {
             };
         }
 
+        // return w/ info for hash calculation
         Ok((hash_sample.freeze(), observed_len))
     }
 
@@ -533,7 +569,7 @@ impl Engine {
             Ok(m) => m,
             // If anything fails, delete the upload and return the error
             Err(err) => {
-                error!("failed processing upload!");
+                error!(?err, "failed processing upload!");
 
                 self.remove(&saved_name).await?;
                 return Err(err);

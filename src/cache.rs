@@ -210,9 +210,9 @@ impl Cache {
 
     /// Returns if an upload is able to be cached
     /// with the current caching rules
-    #[inline(always)]
+    #[inline]
     pub fn will_use(&self, length: u64) -> bool {
-        length <= self.cfg.max_length
+        length <= (self.cfg.max_length as u64)
     }
 
     /// The background job that scans through the cache and removes inactive elements.
@@ -221,6 +221,7 @@ impl Cache {
     /// letting each entry keep track of expiry with its own task
     pub async fn scanner(&self) {
         let mut interval = time::interval(self.cfg.scan_freq);
+        interval.tick().await; // Skip first tick
 
         loop {
             // We put this first so that it doesn't scan the instant the server starts

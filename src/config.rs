@@ -7,6 +7,8 @@ use tracing_subscriber::filter::LevelFilter;
 #[derive(Deserialize)]
 pub struct Config {
     pub engine: EngineConfig,
+    pub cache: CacheConfig,
+    pub disk: DiskConfig,
     pub http: HttpConfig,
     pub logger: LoggerConfig,
 }
@@ -32,12 +34,6 @@ pub struct EngineConfig {
     ///
     /// If this secret is leaked, anyone can delete any file. Be careful!!!
     pub deletion_secret: Option<String>,
-
-    /// Configuration for disk system
-    pub disk: DiskConfig,
-
-    /// Configuration for cache system
-    pub cache: CacheConfig,
 
     /// Maximum size of an upload that will be accepted.
     /// Files above this size can not be uploaded.

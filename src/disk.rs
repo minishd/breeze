@@ -6,7 +6,6 @@ use tokio::{
     io::{self, AsyncWriteExt},
     sync::mpsc,
 };
-use walkdir::WalkDir;
 
 use crate::config;
 
@@ -22,11 +21,14 @@ impl Disk {
     }
 
     /// Counts the number of files saved to disk we have
-    pub fn count(&self) -> usize {
-        WalkDir::new(&self.cfg.save_path)
-            .min_depth(1)
-            .into_iter()
-            .count()
+    pub fn count(&self) -> io::Result<usize> {
+        std::fs::read_dir(&self.cfg.save_path)?.try_fold(0, |acc, x| {
+            Ok(if x?.file_type()?.is_file() {
+                acc + 1
+            } else {
+                acc
+            })
+        })
     }
 
     /// Formats the path on disk for a `saved_name`.
@@ -67,30 +69,46 @@ impl Disk {
     }
 
     /// Create a background I/O task
-    pub fn start_save(&self, saved_name: &str) -> mpsc::UnboundedSender<Bytes> {
+    pub fn start_save<
+        Fut: Future + Send + 'static,
+        F: FnOnce(io::Error) -> Fut + Send + 'static,
+    >(
+        &self,
+        saved_name: &str,
+        fail_callback: F,
+    ) -> mpsc::Sender<Bytes> {
         // start a task that handles saving files to disk (we can save to cache/disk in parallel that way)
-        let (tx, mut rx): (mpsc::UnboundedSender<Bytes>, mpsc::UnboundedReceiver<Bytes>) =
-            mpsc::unbounded_channel();
+        // a large buffer size is chosen so uploads can be received quickly,
+        // but with less possibility of running out of memory.
+        // (thats probably only possible w very high link speed tho......)
+        let (tx, mut rx): (mpsc::Sender<Bytes>, mpsc::Receiver<Bytes>) = mpsc::channel(30000);
 
         let p = self.path_for(saved_name);
 
         tokio::spawn(async move {
             // create file to save upload to
-            let file = File::create(p).await;
-
-            if let Err(err) = file {
-                tracing::error!(%err, "could not open file! make sure your upload path is valid");
-                return;
-            }
-            let mut file = file.unwrap();
+            let mut file = match File::create(p).await {
+                Ok(f) => f,
+                Err(err) => {
+                    tracing::error!(%err, "could not open file! make sure your upload path is valid");
+                    return;
+                }
+            };
 
             // receive chunks and save them to file
             while let Some(chunk) = rx.recv().await {
                 tracing::debug!(length = chunk.len(), "writing chunk to disk");
                 if let Err(err) = file.write_all(&chunk).await {
-                    tracing::error!(%err, "error while writing file to disk");
-                    break;
+                    drop(rx);
+                    fail_callback(err).await;
+                    return;
                 }
+            }
+
+            // flush to disk
+            // this should catch "no space left on device" i hope...
+            if let Err(err) = file.flush().await {
+                fail_callback(err).await;
             }
         });
 

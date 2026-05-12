@@ -1,14 +1,21 @@
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::{Duration, SystemTime},
+    sync::atomic::{AtomicU64, AtomicUsize, Ordering},
+    time::Duration,
 };
 
-use atomic_time::AtomicSystemTime;
 use bytes::Bytes;
+use color_eyre::eyre::{self, bail};
 use dashmap::{DashMap, mapref::one::Ref};
 use tokio::time;
 
 use crate::config;
+
+#[cfg(not(test))]
+use atomic_time::AtomicSystemTime;
+#[cfg(not(test))]
+use std::time::SystemTime;
+#[cfg(test)]
+use tests::{MockAtomicSystemTime as AtomicSystemTime, MockSystemTime as SystemTime};
 
 /// An entry stored in the cache.
 ///
@@ -61,18 +68,29 @@ pub struct Cache {
     /// Total length of data stored in cache currently
     length: AtomicUsize,
 
+    /// How many times the scanner has ran,
+    /// for testing purposes
+    scan_count: AtomicU64,
+
     /// How should it behave
     cfg: config::CacheConfig,
 }
 
 impl Cache {
-    pub fn with_config(cfg: config::CacheConfig) -> Self {
-        Self {
+    pub fn with_config(cfg: config::CacheConfig) -> eyre::Result<Self> {
+        // Sanity check chosen limits
+        if cfg.mem_capacity < cfg.max_length {
+            bail!("`max_length` should not exceed `mem_capacity`");
+        }
+
+        // Return
+        Ok(Self {
             map: DashMap::with_capacity(64),
             length: AtomicUsize::new(0),
+            scan_count: AtomicU64::new(0),
 
             cfg,
-        }
+        })
     }
 
     /// Figure out who should be bumped out of cache next
@@ -221,11 +239,13 @@ impl Cache {
     /// letting each entry keep track of expiry with its own task
     pub async fn scanner(&self) {
         let mut interval = time::interval(self.cfg.scan_freq);
+        interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         interval.tick().await; // Skip first tick
 
         loop {
             // We put this first so that it doesn't scan the instant the server starts
             interval.tick().await;
+            self.scan_count.fetch_add(1, Ordering::Relaxed);
 
             // Save current timestamp so we aren't retrieving it constantly
             // If we don't do this it'll be a LOT of system api calls
@@ -255,5 +275,227 @@ impl Cache {
                 self.map.retain(|k, _| !expired.contains(k));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+
+    use crate::{cache::Cache, config::CacheConfig};
+
+    thread_local! {
+        static MOCK_CLOCK: AtomicU64 = AtomicU64::new(0);
+    }
+    fn get_clock() -> u64 {
+        MOCK_CLOCK.with(|mc| mc.load(Ordering::Relaxed))
+    }
+    fn advance_clock(ms: u64) {
+        MOCK_CLOCK.with(|mc| mc.fetch_add(ms, Ordering::Relaxed));
+    }
+    async fn advance_clock_async(ms: u64) {
+        advance_clock(ms);
+        tokio::time::advance(Duration::from_millis(ms)).await;
+        tokio::task::yield_now().await; // make sure scanner tick runs
+    }
+
+    pub struct MockSystemTimeError;
+
+    #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
+    pub(super) struct MockSystemTime(u64);
+    impl MockSystemTime {
+        pub fn now() -> Self {
+            Self(get_clock())
+        }
+
+        pub fn duration_since(
+            &self,
+            earlier: MockSystemTime,
+        ) -> Result<Duration, MockSystemTimeError> {
+            if self.0 >= earlier.0 {
+                Ok(Duration::from_millis(self.0 - earlier.0))
+            } else {
+                Err(MockSystemTimeError)
+            }
+        }
+
+        pub fn elapsed(&self) -> Result<Duration, MockSystemTimeError> {
+            Self::now().duration_since(*self)
+        }
+    }
+
+    pub(super) struct MockAtomicSystemTime(AtomicU64);
+    impl MockAtomicSystemTime {
+        pub fn now() -> Self {
+            Self(AtomicU64::new(get_clock()))
+        }
+
+        pub fn load(&self, order: Ordering) -> MockSystemTime {
+            MockSystemTime(self.0.load(order))
+        }
+        pub fn store(&self, system_time: MockSystemTime, order: Ordering) {
+            self.0.store(system_time.0, order);
+        }
+    }
+
+    const KEY: &str = "abcdef.png";
+    const VALUE: Bytes = Bytes::from_static(&[0, 1, 2, 3, 4, 5, 6, 7]);
+
+    fn simple() -> Cache {
+        return Cache::with_config(CacheConfig {
+            max_length: 10_000_000,
+            mem_capacity: 100_000_000,
+            scan_freq: Duration::from_secs(5),
+            upload_lifetime: Duration::from_secs(15),
+        })
+        .unwrap();
+    }
+
+    async fn scanning() -> Arc<Cache> {
+        let cache = Arc::new(simple());
+
+        tokio::spawn({
+            let cache = cache.clone();
+            async move { cache.scanner().await }
+        });
+        // allow 0ms scanner tick to run
+        tokio::task::yield_now().await;
+
+        cache
+    }
+
+    /// Make sure that cache use check
+    /// decides properly for multiple lengths
+    #[test]
+    fn will_use() {
+        let cache = simple();
+
+        // use something
+        assert!(cache.will_use(4_000_000));
+
+        // don't use something
+        assert!(!cache.will_use(12_000_001));
+
+        // use something edge
+        assert!(cache.will_use(10_000_000));
+
+        // use something mini
+        assert!(cache.will_use(0));
+    }
+
+    /// Make sure that [`Cache::add`]'s return value
+    /// is `false` when an entry was replaced
+    #[test]
+    fn store_replacement() {
+        let cache = simple();
+
+        // store
+        assert!(cache.add(KEY, VALUE));
+
+        // store w replace
+        assert!(!cache.add(KEY, VALUE));
+    }
+
+    /// Make sure that the scanner ticks at
+    /// the right times, and removes entries
+    /// when expected.
+    #[tokio::test(start_paused = true)]
+    async fn store_expire_on_hit_with_scanner() {
+        let cache = scanning().await;
+
+        // store
+        assert!(cache.add(KEY, VALUE));
+
+        // get again so that scanner timing
+        // doesn't align w expiration
+        advance_clock_async(4999).await;
+        assert_eq!(cache.scan_count.load(Ordering::Relaxed), 0);
+        assert_eq!(cache.get(KEY), Some(VALUE));
+
+        // next scanner tick
+        advance_clock_async(1).await;
+        assert_eq!(cache.scan_count.load(Ordering::Relaxed), 1);
+
+        // advance a bit more
+        // make sure we don't expire early
+        advance_clock_async(7000).await;
+        assert_eq!(cache.scan_count.load(Ordering::Relaxed), 2);
+        assert!(cache.map.get(KEY).is_some());
+
+        // advance to next scanner tick
+        advance_clock_async(3000).await;
+        assert_eq!(cache.scan_count.load(Ordering::Relaxed), 3);
+
+        // advance to after expiry
+        advance_clock_async(4999).await;
+        assert_eq!(cache.scan_count.load(Ordering::Relaxed), 3);
+
+        // it should be there because we
+        // offset ourselves by 1ms
+        assert!(cache.map.get(KEY).is_some());
+        assert_eq!(cache.get(KEY), None);
+    }
+
+    /// Make sure that the scanner removes
+    /// expired entries.
+    #[tokio::test(start_paused = true)]
+    async fn store_expire_by_scanner() {
+        let cache = scanning().await;
+
+        // store
+        assert!(cache.add(KEY, VALUE));
+
+        // make sure we don't expire early
+        advance_clock_async(6500).await;
+        assert!(cache.map.get(KEY).is_some());
+
+        // advance to after expiry
+        advance_clock_async(8500).await;
+
+        // it should get hit by scanner
+        assert!(cache.map.get(KEY).is_none());
+    }
+
+    /// Make sure that entries expire on hit,
+    /// even when there is no scanner
+    #[test]
+    fn store_get_expire_on_hit() {
+        let cache = simple();
+
+        // store, get
+        let added_at = MockSystemTime::now();
+        assert!(cache.add(KEY, VALUE));
+        assert_eq!(cache.get(KEY), Some(VALUE));
+
+        // get after delay
+        // (upload gets used)
+        advance_clock(2000);
+        assert_eq!(cache.map.get(KEY).unwrap().last_used(), added_at);
+        assert_eq!(cache.get(KEY), Some(VALUE));
+        assert_eq!(
+            cache.map.get(KEY).unwrap().last_used(),
+            MockSystemTime::now()
+        );
+
+        // get after longer delay
+        // (upload should have been used so no expire)
+        advance_clock(14000);
+        assert_eq!(cache.get(KEY), Some(VALUE));
+        assert_eq!(
+            cache.map.get(KEY).unwrap().last_used(),
+            MockSystemTime::now()
+        );
+
+        // get after expiration
+        advance_clock(15000);
+        assert!(cache.get(KEY).is_none());
     }
 }

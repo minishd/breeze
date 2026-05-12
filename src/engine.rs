@@ -90,7 +90,23 @@ pub struct Engine {
     cache: Arc<cache::Cache>,
 
     /// An interface to the on-disk upload store
-    disk: disk::Disk,
+    disk: Arc<disk::Disk>,
+}
+
+/// Wipe out an upload from all storage.
+/// * Intended for deletion URLs and failed uploads
+/// * Separated from [`Engine`] for use in [`disk::Disk`]
+async fn remove(cache: &cache::Cache, disk: &disk::Disk, saved_name: &str) -> eyre::Result<()> {
+    info!(saved_name, "!! removing upload");
+
+    cache.remove(saved_name);
+    disk.remove(saved_name)
+        .await
+        .wrap_err("failed to remove file from disk")?;
+
+    info!("!! successfully removed upload");
+
+    Ok(())
 }
 
 /// Try to parse a `Range` header into an easier format to work with
@@ -173,30 +189,26 @@ fn calculate_hash(len: u64, data_sample: Bytes) -> u128 {
 
 impl Engine {
     /// Creates a new instance of the engine
-    pub fn with_config(cfg: config::EngineConfig) -> Self {
+    pub fn new(
+        cfg: config::EngineConfig,
+        cache: Arc<cache::Cache>,
+        disk: disk::Disk,
+    ) -> std::io::Result<Self> {
         let deletion_hmac = cfg
             .deletion_secret
             .as_ref()
             .map(|s| HmacSha256::new_from_slice(s.as_bytes()).unwrap());
 
-        let cache = cache::Cache::with_config(cfg.cache.clone());
-        let disk = disk::Disk::with_config(cfg.disk.clone());
-
-        let cache = Arc::new(cache);
-
-        let cache_scanner = cache.clone();
-        tokio::spawn(async move { cache_scanner.scanner().await });
-
-        Self {
+        Ok(Self {
             // initialise our cached upload count. this doesn't include temp uploads!
-            upl_count: AtomicUsize::new(disk.count()),
+            upl_count: AtomicUsize::new(disk.count()?),
             deletion_hmac,
 
             cfg,
 
             cache,
-            disk,
-        }
+            disk: Arc::new(disk),
+        })
     }
 
     /// Fetch an upload.
@@ -378,17 +390,7 @@ impl Engine {
     ///
     /// (Intended for deletion URLs and failed uploads)
     pub async fn remove(&self, saved_name: &str) -> eyre::Result<()> {
-        info!(saved_name, "!! removing upload");
-
-        self.cache.remove(saved_name);
-        self.disk
-            .remove(saved_name)
-            .await
-            .wrap_err("failed to remove file from disk")?;
-
-        info!("!! successfully removed upload");
-
-        Ok(())
+        remove(&self.cache, &self.disk, saved_name).await
     }
 
     /// Save a file to disk, and optionally cache.
@@ -412,7 +414,19 @@ impl Engine {
 
         // don't begin a disk save if we're using temporary lifetimes
         let tx = if lifetime.is_none() {
-            Some(self.disk.start_save(saved_name))
+            Some(self.disk.start_save(saved_name, {
+                let cache = self.cache.clone();
+                let disk = self.disk.clone();
+                let saved_name = saved_name.to_string();
+
+                async move |err| {
+                    // try to delete the failed upload
+                    error!(%saved_name, %err, "error while saving file to disk");
+                    if let Err(err) = remove(&cache, &disk, &saved_name).await {
+                        error!(%saved_name, %err, "IO error callback failed to remove upload");
+                    }
+                }
+            }))
         } else {
             None
         };
@@ -445,6 +459,7 @@ impl Engine {
             if !coalesce_and_strip && let Some(ref tx) = tx {
                 debug!("sending chunk to i/o task");
                 tx.send(chunk.clone())
+                    .await
                     .wrap_err("failed to send chunk to i/o task!")?;
             }
 
@@ -499,6 +514,7 @@ impl Engine {
             if let Some(ref tx) = tx {
                 debug!("sending filled buffer to i/o task");
                 tx.send(data.clone())
+                    .await
                     .wrap_err("failed to send coalesced buffer to i/o task!")?;
             }
 

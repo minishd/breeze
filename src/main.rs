@@ -23,6 +23,8 @@ mod view;
 #[cfg(not(target_env = "msvc"))]
 use tikv_jemallocator::Jemalloc;
 
+use crate::{cache::Cache, disk::Disk};
+
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -72,7 +74,7 @@ async fn main() -> eyre::Result<()> {
 
     // Check config
     {
-        let save_path = cfg.engine.disk.save_path.clone();
+        let save_path = cfg.disk.save_path.clone();
         if !save_path.exists() || !save_path.is_dir() {
             bail!("the save path does not exist or is not a directory! this is invalid");
         }
@@ -81,8 +83,18 @@ async fn main() -> eyre::Result<()> {
         warn!("engine upload_key is empty! no key will be required for uploading new files");
     }
 
+    // Create backends
+    let cache = Arc::new(Cache::with_config(cfg.cache)?);
+    let disk = Disk::with_config(cfg.disk);
+
+    // Start cache scanner
+    tokio::spawn({
+        let cache = cache.clone();
+        async move { cache.scanner().await }
+    });
+
     // Create engine
-    let engine = Engine::with_config(cfg.engine);
+    let engine = Engine::new(cfg.engine, cache, disk)?;
 
     // Build main router
     let app = router(engine);
